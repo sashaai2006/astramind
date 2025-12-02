@@ -44,8 +44,12 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Environment
+# Environment variables (NEVER commit secrets!)
 .env
+.env.*
+!.env.example
 .env.local
+.env.development
 .env.production
+.env.test
 
