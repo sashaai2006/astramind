@@ -1,6 +1,6 @@
-# Virtual AI Company MVP
+# AstroMind
 
-Monorepo with FastAPI backend and Next.js frontend that simulates a virtual AI company generating MVP artifacts. The backend orchestrates CEO/developer agents, streams logs over WebSocket, manages project files, and can publish generated code to GitHub. The frontend visualises file trees, DAG execution, editor, and GitHub publishing.
+Virtual AI Company MVP - Monorepo with FastAPI backend and Next.js frontend that simulates a virtual AI company generating MVP artifacts. The backend orchestrates CEO/developer agents, streams logs over WebSocket, manages project files. The frontend visualises file trees, DAG execution, editor, and AI chat.
 
 ## Prerequisites
 
@@ -21,11 +21,11 @@ make dev     # starts uvicorn and next dev together
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PROJECTS_ROOT` | Directory for generated artifacts | `./projects` |
-| `LLM_MODE` | `mock` or `ollama` | `mock` |
-| `LLM_SEMAPHORE` | Max concurrent LLM calls | `3` |
-| `GITHUB_API_URL` | GitHub API base URL | `https://api.github.com` |
+| `LLM_MODE` | `mock`, `ollama`, or `groq` | `mock` |
+| `LLM_SEMAPHORE` | Max concurrent LLM calls | `10` |
+| `GROQ_API_KEY` | Groq API key (for `groq` mode) | - |
 
-Set `LLM_MODE=ollama` to invoke the local Ollama CLI instead of the mock adapter.
+Set `LLM_MODE=groq` to use Groq API (fast inference). Requires `GROQ_API_KEY` environment variable.
 
 ## API reference (curl)
 
@@ -55,14 +55,6 @@ Download ZIP:
 curl -OJ http://localhost:8000/api/projects/<project_id>/download
 ```
 
-Publish to GitHub:
-
-```bash
-curl -X POST http://localhost:8000/api/projects/<project_id>/publish/github \
-  -H "Content-Type: application/json" \
-  -d '{"token":"<PAT>","repo_name":"repo-name","private":false}'
-```
-
 ### Tests
 
 ```bash
@@ -74,5 +66,3 @@ pytest
 
 - Projects are stored under `./projects/<project_id>` alongside `meta.json` and cached `project.zip`.
 - WebSocket supports `{"type":"command","command":"stop"}` to cancel orchestration.
-- Publishing never stores the provided PAT; it is used only for the current request.
-
