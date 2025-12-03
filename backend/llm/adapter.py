@@ -27,14 +27,26 @@ def get_llm_adapter() -> BaseLLMAdapter:
     settings = get_settings()
     if settings.llm_mode == "mock":
         from .mock_adapter import MockLLMAdapter
-
         _cached_adapter = MockLLMAdapter()
+    
     elif settings.llm_mode == "groq":
         from .groq_adapter import GroqLLMAdapter
-
         _cached_adapter = GroqLLMAdapter(model=settings.groq_model)
-    else:
+    
+    elif settings.llm_mode == "github":
+        from .github_adapter import GitHubModelsAdapter
+        _cached_adapter = GitHubModelsAdapter(model=settings.github_model)
+    
+    elif settings.llm_mode == "deepseek":
+        from .deepseek_adapter import DeepSeekAdapter
+        _cached_adapter = DeepSeekAdapter(model=settings.deepseek_model)
+    
+    elif settings.llm_mode == "cerebras":
+        from .cerebras_adapter import CerebrasAdapter
+        _cached_adapter = CerebrasAdapter(model=settings.cerebras_model)
+    
+    else:  # ollama
         from .ollama_adapter import OllamaLLMAdapter
-
         _cached_adapter = OllamaLLMAdapter(model=settings.ollama_model)
+    
     return _cached_adapter

@@ -9,10 +9,12 @@ from uuid import UUID, uuid4
 
 from backend.agents.ceo import CEOAgent
 from backend.agents.developer import DeveloperAgent
+from backend.agents.tester import TesterAgent
 from backend.memory.db import get_session
 from backend.memory import utils as db_utils
 from backend.settings import get_settings
 from backend.utils.logging import get_logger
+from backend.utils.formatter import CodeFormatter
 
 from .ws_manager import ws_manager
 
@@ -27,6 +29,7 @@ class Orchestrator:
         self._semaphore = asyncio.Semaphore(settings.llm_semaphore)
         self._ceo = CEOAgent()
         self._developer = DeveloperAgent(self._semaphore)
+        self._tester = TesterAgent()
         self._stop_events: Dict[str, asyncio.Event] = {}
         self._project_tasks: Dict[str, asyncio.Task] = {}
 
@@ -108,6 +111,41 @@ class Orchestrator:
                     ],
                     return_exceptions=False,
                 )
+
+            # Format code
+            await self._emit_event(
+                project_id,
+                "Formatting code...",
+                agent="system",
+            )
+            settings = get_settings()
+            project_path = settings.projects_root / str(project_id)
+            format_results = await CodeFormatter.format_project(project_path)
+            await self._emit_event(
+                project_id,
+                f"Formatted {format_results['formatted']} files",
+                agent="formatter",
+                level="info"
+            )
+            
+            # Run tests after all steps complete
+            await self._emit_event(
+                project_id,
+                "Running final tests...",
+                agent="system",
+            )
+            test_results = await self._tester.test_project(project_id, context)
+            
+            if not test_results["passed"]:
+                await self._emit_event(
+                    project_id,
+                    f"Tests failed: {len(test_results['issues'])} issues found",
+                    agent="tester",
+                    level="warning"
+                )
+                # Log issues but don't fail the project
+                for issue in test_results["issues"][:5]:  # Show first 5
+                    await self._emit_event(project_id, f"Issue: {issue}", agent="tester", level="warning")
 
             await self._mark_done(project_id)
         except Exception as exc:  # noqa: BLE001

@@ -21,11 +21,48 @@ make dev     # starts uvicorn and next dev together
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PROJECTS_ROOT` | Directory for generated artifacts | `./projects` |
-| `LLM_MODE` | `mock`, `ollama`, or `groq` | `mock` |
+| `LLM_MODE` | `mock`, `ollama`, `groq`, `github`, `deepseek`, or `cerebras` | `deepseek` |
 | `LLM_SEMAPHORE` | Max concurrent LLM calls | `10` |
 | `GROQ_API_KEY` | Groq API key (for `groq` mode) | - |
+| `GITHUB_TOKEN` | GitHub token (for `github` mode - FREE GPT-4o/Claude!) | - |
+| `DEEPSEEK_API_KEY` | DeepSeek API key (for `deepseek` mode - FREE 671B model!) | - |
+| `CEREBRAS_API_KEY` | Cerebras API key (for `cerebras` mode - FASTEST inference!) | - |
 
-Set `LLM_MODE=groq` to use Groq API (fast inference). Requires `GROQ_API_KEY` environment variable.
+### Free LLM Options (Recommended!)
+
+**DeepSeek** (Default, Recommended):
+- Get free API key: https://platform.deepseek.com/api_keys
+- DeepSeek-V3: 671B MoE model, beats GPT-4o on coding
+- Free: 10M tokens/day
+```bash
+export LLM_MODE=deepseek
+export DEEPSEEK_API_KEY=your_key_here
+```
+
+**GitHub Models** (Best Quality):
+- Get token: https://github.com/settings/tokens (classic token)
+- Access to GPT-4o, Claude 3.5 Sonnet, Llama 3.1-70B
+- Free for developers
+```bash
+export LLM_MODE=github
+export GITHUB_MODEL=gpt-4o  # or claude-3-5-sonnet
+export GITHUB_TOKEN=your_token_here
+```
+
+**Cerebras** (Fastest):
+- Get API key: https://cloud.cerebras.ai/
+- World's fastest inference (2000+ tokens/sec)
+- Free tier available
+```bash
+export LLM_MODE=cerebras
+export CEREBRAS_API_KEY=your_key_here
+```
+
+**Groq** (Fast & Free):
+```bash
+export LLM_MODE=groq
+export GROQ_API_KEY=your_key_here
+```
 
 ## API reference (curl)
 

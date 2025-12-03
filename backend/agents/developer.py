@@ -136,7 +136,10 @@ class DeveloperAgent:
             return {"path": path_value, "content": turbo_content}
         # --- TURBO TEMPLATES END ---
 
-        prompt = self._build_prompt(context, step, [spec])
+        # Read project context (existing files) for better coherence
+        project_context = await self._read_project_context(project_id)
+        
+        prompt = self._build_prompt(context, step, [spec], project_context=project_context)
         parsed_response = await self._execute_with_retry(prompt, step, context)
         file_defs = self._normalize_files(
             parsed_response.get("files") if parsed_response else [],
@@ -341,12 +344,41 @@ class DeveloperAgent:
         
         return None
 
+    async def _read_project_context(self, project_id: str) -> str:
+        """Read existing files in the project for context."""
+        try:
+            from backend.utils.fileutils import iter_file_entries, read_project_file
+            
+            project_path = self._settings.projects_root / project_id
+            if not project_path.exists():
+                return ""
+            
+            context_files = []
+            max_files = 5  # Limit to avoid token overflow
+            max_size = 2000  # Max chars per file
+            
+            for file_path in list(iter_file_entries(project_path))[:max_files]:
+                try:
+                    content = await asyncio.to_thread(read_project_file, project_path, file_path)
+                    if content and len(content) < max_size:
+                        context_files.append(f"FILE: {file_path}\n```\n{content[:max_size]}\n```")
+                except:
+                    continue
+            
+            if context_files:
+                return "\n\nEXISTING PROJECT FILES (for context):\n" + "\n\n".join(context_files)
+            return ""
+        except Exception as e:
+            LOGGER.warning("Failed to read project context: %s", e)
+            return ""
+
     def _build_prompt(
         self, 
         context: Dict[str, Any], 
         step: Dict[str, Any], 
         files_spec: List[Dict[str, Any]],
-        feedback: List[str] = []
+        feedback: List[str] = [],
+        project_context: str = ""
     ) -> str:
         spec = json.dumps(files_spec, indent=2)
         feedback_section = ""
@@ -368,6 +400,7 @@ class DeveloperAgent:
             f"Project: {context['title']} ({context['target']})\n"
             f"Full Description: {context['description']}\n"
             f"Your Task: {step.get('name')}\n"
+            f"{project_context}\n"
             "\n"
             "LEGENDARY QUALITY STANDARDS:\n"
             "You NEVER write placeholder code. You NEVER leave TODOs.\n"
@@ -397,6 +430,18 @@ class DeveloperAgent:
             "2. BEST PRACTICES: Use modern patterns, error handling, proper structure\n"
             "3. WORKING CODE: User should be able to run it immediately without modifications\n"
             "4. COMMENTS: Add brief comments only where logic is complex\n"
+            "\n"
+            "BEST PRACTICES (Follow religiously!):\n"
+            "✓ JavaScript: Use const/let (never var), async/await, ES6+ features\n"
+            "✓ Error Handling: try/catch for critical operations, validate inputs\n"
+            "✓ DRY: Don't repeat yourself - extract reusable functions\n"
+            "✓ SOLID: Single Responsibility - each class/function does ONE thing\n"
+            "✓ Performance: Avoid O(n²) algorithms, use efficient data structures\n"
+            "✓ Security: Sanitize user inputs, no eval(), proper escaping\n"
+            "✓ Accessibility: Semantic HTML, ARIA labels, keyboard navigation\n"
+            "✓ Modern CSS: Flexbox/Grid, CSS variables, mobile-first responsive\n"
+            "✓ Clean Code: Meaningful names, small functions (<50 lines), no magic numbers\n"
+            "✓ Architecture: Separation of concerns (data/logic/UI), modular structure\n"
             "\n"
             "FULL WORKING EXAMPLE (Snake Game with Three.js):\n"
             "\n"
