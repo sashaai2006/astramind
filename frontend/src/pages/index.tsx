@@ -94,6 +94,33 @@ export default function HomePage() {
     setTarget(t.target as any);
   };
 
+  const handleDelete = async (e: React.MouseEvent, projectId: string, projectTitle: string) => {
+    e.preventDefault(); // Don't navigate to project
+    e.stopPropagation();
+    
+    if (!confirm(`Are you sure you want to delete "${projectTitle}"?\n\nThis will permanently delete all files and cannot be undone.`)) {
+      return;
+    }
+    
+    soundManager.playClick();
+    
+    try {
+      const response = await fetch(`${API_BASE}/api/projects/${projectId}`, {
+        method: "DELETE",
+      });
+      
+      if (response.ok) {
+        soundManager.playSuccess();
+        // Remove from local state
+        setProjects(prev => prev.filter(p => p.id !== projectId));
+      } else {
+        alert("Failed to delete project");
+      }
+    } catch (e) {
+      alert(`Error: ${e}`);
+    }
+  };
+
   return (
     <div style={{ 
       minHeight: "100vh", 
@@ -178,51 +205,82 @@ export default function HomePage() {
               {projects
                 .filter(p => !searchQuery || p.title.toLowerCase().includes(searchQuery.toLowerCase()) || p.description.toLowerCase().includes(searchQuery.toLowerCase()))
                 .map((project) => (
-                <Link key={project.id} href={`/project/${project.id}`} style={{ textDecoration: "none" }}>
-                  <div
-                    className="glass-panel"
-                    style={{
-                      padding: "1.25rem",
-                      borderRadius: "10px",
-                      cursor: "pointer",
-                      height: "100%",
-                      display: "flex",
-                      flexDirection: "column",
-                      transition: "all 0.2s",
-                      border: "1px solid rgba(255,255,255,0.1)"
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.borderColor = "rgba(59, 130, 246, 0.5)";
-                      e.currentTarget.style.transform = "translateY(-2px)";
-                      soundManager.playHover();
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)";
-                      e.currentTarget.style.transform = "translateY(0)";
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: "0.75rem" }}>
-                      <h3 style={{ margin: 0, color: "#fff", fontSize: "1.1rem", fontWeight: "bold" }}>{project.title}</h3>
-                      <span style={{ 
-                        fontSize: "0.7rem", 
-                        padding: "2px 8px", 
-                        borderRadius: "4px",
-                        background: project.status === "done" ? "rgba(74, 222, 128, 0.2)" : project.status === "failed" ? "rgba(239, 68, 68, 0.2)" : "rgba(250, 204, 21, 0.2)",
-                        color: project.status === "done" ? "#4ade80" : project.status === "failed" ? "#ef4444" : "#facc15",
-                        border: `1px solid ${project.status === "done" ? "#4ade80" : project.status === "failed" ? "#ef4444" : "#facc15"}33`
-                      }}>
-                        {project.status.toUpperCase()}
-                      </span>
+                <div key={project.id} style={{ position: "relative" }}>
+                  <Link href={`/project/${project.id}`} style={{ textDecoration: "none" }}>
+                    <div
+                      className="glass-panel"
+                      style={{
+                        padding: "1.25rem",
+                        borderRadius: "10px",
+                        cursor: "pointer",
+                        height: "100%",
+                        display: "flex",
+                        flexDirection: "column",
+                        transition: "all 0.2s",
+                        border: "1px solid rgba(255,255,255,0.1)"
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.borderColor = "rgba(59, 130, 246, 0.5)";
+                        e.currentTarget.style.transform = "translateY(-2px)";
+                        soundManager.playHover();
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)";
+                        e.currentTarget.style.transform = "translateY(0)";
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: "0.75rem" }}>
+                        <h3 style={{ margin: 0, color: "#fff", fontSize: "1.1rem", fontWeight: "bold" }}>{project.title}</h3>
+                        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                          <span style={{ 
+                            fontSize: "0.7rem", 
+                            padding: "2px 8px", 
+                            borderRadius: "4px",
+                            background: project.status === "done" ? "rgba(74, 222, 128, 0.2)" : project.status === "failed" ? "rgba(239, 68, 68, 0.2)" : "rgba(250, 204, 21, 0.2)",
+                            color: project.status === "done" ? "#4ade80" : project.status === "failed" ? "#ef4444" : "#facc15",
+                            border: `1px solid ${project.status === "done" ? "#4ade80" : project.status === "failed" ? "#ef4444" : "#facc15"}33`
+                          }}>
+                            {project.status.toUpperCase()}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDelete(e, project.id, project.title)}
+                            title="Delete project"
+                            style={{
+                              background: "rgba(239, 68, 68, 0.2)",
+                              color: "#ef4444",
+                              border: "1px solid rgba(239, 68, 68, 0.3)",
+                              width: "24px",
+                              height: "24px",
+                              borderRadius: "4px",
+                              cursor: "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: "0.8rem",
+                              padding: 0
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.background = "rgba(239, 68, 68, 0.4)";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = "rgba(239, 68, 68, 0.2)";
+                            }}
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </div>
+                      <p style={{ margin: 0, color: "#9ca3af", fontSize: "0.85rem", lineHeight: 1.4, flex: 1 }}>
+                        {project.description.length > 100 ? project.description.slice(0, 100) + "..." : project.description}
+                      </p>
+                      <div style={{ marginTop: "0.75rem", fontSize: "0.7rem", color: "#6b7280", display: "flex", gap: "0.5rem" }}>
+                        <span>🎯 {project.target}</span>
+                        {project.created_at && <span>📅 {new Date(project.created_at).toLocaleDateString()}</span>}
+                      </div>
                     </div>
-                    <p style={{ margin: 0, color: "#9ca3af", fontSize: "0.85rem", lineHeight: 1.4, flex: 1 }}>
-                      {project.description.length > 100 ? project.description.slice(0, 100) + "..." : project.description}
-                    </p>
-                    <div style={{ marginTop: "0.75rem", fontSize: "0.7rem", color: "#6b7280", display: "flex", gap: "0.5rem" }}>
-                      <span>🎯 {project.target}</span>
-                      {project.created_at && <span>📅 {new Date(project.created_at).toLocaleDateString()}</span>}
-                    </div>
-                  </div>
-                </Link>
+                  </Link>
+                </div>
               ))}
             </div>
 

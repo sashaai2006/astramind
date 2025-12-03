@@ -133,6 +133,36 @@ async def create_project(
     return {"project_id": str(project.id), "status": "created"}
 
 
+@router.delete("/{project_id}")
+async def delete_project(
+    project_id: UUID, session: AsyncSession = Depends(get_session_dependency)
+) -> dict:
+    """Delete a project and all its files."""
+    import shutil
+    
+    # Get project from DB
+    project = await db_utils.get_project(session, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Delete project directory
+    project_path = _project_path(project_id)
+    if project_path.exists():
+        try:
+            shutil.rmtree(project_path)
+            LOGGER.info("Deleted project directory: %s", project_path)
+        except Exception as e:
+            LOGGER.error("Failed to delete project directory %s: %s", project_path, e)
+    
+    # Delete from database
+    await session.delete(project)
+    await session.commit()
+    
+    LOGGER.info("Deleted project %s from database", project_id)
+    
+    return {"success": True, "message": f"Project {project.title} deleted"}
+
+
 @router.get("/{project_id}/status", response_model=ProjectStatusResponse)
 async def get_status(
     project_id: UUID, session: AsyncSession = Depends(get_session_dependency)

@@ -27,17 +27,21 @@ class RefactorAgent:
         self._settings = get_settings()
 
     async def _broadcast_thought(self, project_id: str, msg: str, level: str = "info"):
-        """Helper to broadcast agent thoughts to the UI."""
-        await ws_manager.broadcast(
-            project_id,
-            {
-                "type": "event",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "project_id": project_id,
-                "agent": "refactor",
-                "level": level,
-                "msg": msg,
-            },
+        """Helper to broadcast agent thoughts to the UI (fire-and-forget)."""
+        # Don't await - fire and forget to avoid blocking
+        import asyncio
+        asyncio.create_task(
+            ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "event",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "project_id": project_id,
+                    "agent": "refactor",
+                    "level": level,
+                    "msg": msg,
+                },
+            )
         )
 
     async def chat(self, project_id: UUID, message: str, history: Optional[List[Dict[str, str]]] = None) -> str:
@@ -167,8 +171,8 @@ class RefactorAgent:
         return response_message
 
     def _read_context_files(self, project_path: Path, user_query: str = "") -> str:
-        """Read text files to provide context to LLM with smart selection (LIGHT MODE)."""
-        entries = iter_file_entries(project_path)
+        """Read text files to provide context to LLM with smart selection (ULTRA-LIGHT MODE)."""
+        entries = list(iter_file_entries(project_path))[:30]  # Limit to first 30 files for speed
         
         # Scoring function
         def score_entry(entry):
@@ -202,8 +206,8 @@ class RefactorAgent:
         
         buffer = []
         total_chars = 0
-        MAX_CHARS = 15000  # Reduced from 25000 for faster responses
-        MAX_FILES = 5  # Limit number of files for speed
+        MAX_CHARS = 8000  # ULTRA reduced for speed
+        MAX_FILES = 3  # Only 3 most relevant files
 
         files_included = 0
         for entry in sorted_entries:
@@ -213,8 +217,8 @@ class RefactorAgent:
             if files_included >= MAX_FILES:
                 break
             
-            # Hard skip very large files
-            if entry.size_bytes > 50000:  # Reduced from 100000
+            # Hard skip large files (aggressive)
+            if entry.size_bytes > 20000:  # Very aggressive filtering
                 continue
             
             # Skip low-score files entirely
