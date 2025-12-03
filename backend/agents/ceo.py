@@ -22,28 +22,37 @@ class CEOAgent:
 
     async def _llm_plan(self, description: str, target: str) -> List[Dict[str, Any]]:
         prompt = (
-            "You are a technical CEO planning an MVP project. Your goal is to architect a scalable system.\n"
-            f"Project description: {description}\n"
-            f"Target platform: {target}\n"
+            "You are a technical CEO. Create a SIMPLE, FAST execution plan for an MVP.\n"
+            f"Project: {description}\n"
+            f"Target: {target}\n"
             "\n"
-            "Create a JSON execution plan. Break the project into independent parallel tracks where possible (e.g., 'frontend', 'backend', 'database').\n"
-            "Output a JSON object with the following structure:\n"
+            "CRITICAL: Keep it SIMPLE and FAST. Prefer 1-2 steps maximum.\n"
+            "Combine related tasks into one step (e.g., 'build_project' instead of separate frontend/backend steps).\n"
+            "\n"
+            "Output JSON:\n"
             "{\n"
-            '  "_thought": "Explain your reasoning for the plan and parallelization strategy...",\n'
+            '  "_thought": "Brief reasoning (1 sentence)",\n'
             '  "steps": [\n'
             '    {\n'
-            '      "name": "string (e.g. \'scaffold_frontend\', \'setup_database\')",'
-            '      "agent": "developer",'
-            '      "parallel_group": "string or null (steps with same group run in parallel)",'
-            '      "payload": { "files": [ { "path": "path/to/file", "content": "DETAILED INSTRUCTIONS..." } ] }\n'
+            '      "name": "build_project",\n'
+            '      "agent": "developer",\n'
+            '      "parallel_group": "main",\n'
+            '      "payload": {\n'
+            '        "files": [\n'
+            '          {"path": "index.html", "content": "Detailed instructions for main HTML file"},\n'
+            '          {"path": "script.js", "content": "Instructions for main JS logic"},\n'
+            '          {"path": "README.md", "content": "Project description and how to run"}\n'
+            '        ]\n'
+            '      }\n'
             '    }\n'
             '  ]\n'
             "}\n"
             "\n"
             "RULES:\n"
-            "1. MAXIMIZE PARALLELISM: Put frontend and backend tasks in the same 'parallel_group' (e.g., 'phase_1').\n"
-            "2. DETAILED SPECS: In 'payload.files.content', write DETAILED natural language instructions. Do NOT write code.\n"
-            "3. Return ONLY valid JSON. No markdown formatting."
+            "1. MINIMIZE STEPS: 1-2 steps maximum. Combine everything possible.\n"
+            "2. ONE parallel_group for all steps (e.g., 'main')\n"
+            "3. DETAILED file instructions (natural language, not code)\n"
+            "4. Return ONLY valid JSON, no markdown\n"
         )
         adapter = get_llm_adapter()
         try:
@@ -71,47 +80,33 @@ class CEOAgent:
             return steps
         except Exception as exc:
             LOGGER.error("CEO plan generation failed: %s", exc)
-            return self._mock_plan(description, target)
+            # Fallback to simplified plan
+            return [{
+                "id": str(uuid4()),
+                "name": "build_project",
+                "agent": "developer",
+                "parallel_group": "main",
+                "payload": {
+                    "files": [
+                        {"path": "index.html", "content": f"Create {target} project: {description}"},
+                        {"path": "README.md", "content": f"# {description}"},
+                    ]
+                },
+            }]
 
     def _mock_plan(self, description: str, target: str) -> List[Dict[str, Any]]:
-        base_payload = [
-            {
-                "path": "README.md",
-                "content": f"# {description}\n\nGenerated for target {target}.",
-            },
-            {
-                "path": "src/main.py",
-                "content": 'print("Hello from generated project")',
-            },
-        ]
+        """Single-step plan for maximum speed."""
         return [
             {
                 "id": str(uuid4()),
-                "name": "generate_frontend",
+                "name": "build_project",
                 "agent": "developer",
-                "parallel_group": "build",
-                "payload": {"files": base_payload},
-            },
-            {
-                "id": str(uuid4()),
-                "name": "generate_backend",
-                "agent": "developer",
-                "parallel_group": "build",
-                "payload": {"files": base_payload},
-            },
-            {
-                "id": str(uuid4()),
-                "name": "package",
-                "agent": "developer",
-                "parallel_group": None,
+                "parallel_group": "main",
                 "payload": {
                     "files": [
-                        {
-                            "path": "manifest.json",
-                            "content": json.dumps(
-                                {"summary": description, "target": target}, indent=2
-                            ),
-                        }
+                        {"path": "index.html", "content": f"Create complete {target} project: {description}"},
+                        {"path": "README.md", "content": f"# {description}\n\nTarget: {target}"},
+                        {"path": "meta.json", "content": json.dumps({"description": description, "target": target}, indent=2)},
                     ]
                 },
             },
