@@ -88,6 +88,25 @@ class DeveloperAgent:
             else:
                 file_defs.append(result)
 
+        # Auto-review critical files for quality
+        critical_files = [f for f in file_defs if self._is_critical_file(f["path"])]
+        if critical_files and len(critical_files) <= 2:  # Only if 1-2 critical files (don't spam)
+            await self._broadcast_thought(project_id, f"Running quality check on {len(critical_files)} critical file(s)...")
+            try:
+                from backend.agents.reviewer import ReviewerAgent
+                reviewer = ReviewerAgent(self._semaphore)
+                task_desc = f"{context['title']}: {step_name}"
+                review_result = await reviewer.review(task_desc, critical_files)
+                
+                if not review_result["approved"]:
+                    await self._broadcast_thought(
+                        project_id,
+                        f"Quality issues found in {critical_files[0]['path']}: {review_result['comments'][0] if review_result['comments'] else 'See logs'}",
+                        "warning"
+                    )
+            except Exception as e:
+                LOGGER.warning("Auto-review failed (non-critical): %s", e)
+
         await self._save_files(project_id, step, file_defs)
         
         if on_message:
@@ -387,6 +406,11 @@ class DeveloperAgent:
             "6. Do NOT include markdown formatting or code blocks.\n"
             "7. Return ONLY the JSON object, nothing else."
         )
+
+    def _is_critical_file(self, path: str) -> bool:
+        """Determine if a file is critical and should be auto-reviewed."""
+        critical_patterns = ["index.html", "main.js", "main.py", "app.js", "game.js", "App.tsx", "index.tsx"]
+        return any(pattern in path for pattern in critical_patterns)
 
     def _normalize_files(
         self, file_defs: Optional[List[Dict[str, Any]]], project_id: str
