@@ -10,7 +10,7 @@ from uuid import UUID
 from backend.core.ws_manager import ws_manager
 from backend.llm.adapter import get_llm_adapter
 from backend.settings import get_settings
-from backend.sandbox.executor import SandboxExecutor
+from backend.sandbox.executor import execute_safe
 from backend.utils.fileutils import iter_file_entries, read_project_file
 from backend.utils.json_parser import clean_and_parse_json
 from backend.utils.logging import get_logger
@@ -32,7 +32,6 @@ class TesterAgent:
     def __init__(self) -> None:
         self._adapter = get_llm_adapter()
         self._settings = get_settings()
-        self._executor = SandboxExecutor()
 
     async def _broadcast_thought(self, project_id: str, msg: str, level: str = "info"):
         """Helper to broadcast agent thoughts to the UI."""
@@ -143,7 +142,7 @@ class TesterAgent:
             # Python
             elif file_path.endswith('.py'):
                 try:
-                    result = await self._executor.run_safe(
+                    result = await execute_safe(
                         ["python3", "-m", "py_compile", str(full_path)],
                         timeout_seconds=5
                     )
@@ -233,7 +232,7 @@ class TesterAgent:
             if main_py.exists():
                 try:
                     # Try to import and basic syntax check
-                    result = await self._executor.run_safe(
+                    result = await execute_safe(
                         ["python3", "-c", f"import sys; sys.path.insert(0, '{project_path}'); import main"],
                         timeout_seconds=5
                     )
