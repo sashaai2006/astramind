@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
 from backend.api import projects, websocket
+from backend.core.orchestrator import orchestrator
 from backend.memory.db import init_db, async_session_factory
 from backend.memory.models import Task
 from backend.settings import get_settings
@@ -43,6 +44,7 @@ async def lifespan(app: FastAPI):
 
     yield
     # Shutdown logic here if needed
+    await orchestrator.shutdown()
 
 
 app = FastAPI(
@@ -58,6 +60,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def check_api_key(request: Request, call_next):
+    settings = get_settings()
+    # Only enforce if key is set and path starts with /api (exclude docs/websocket/static)
+    if settings.admin_api_key and request.url.path.startswith("/api"):
+        api_key = request.headers.get("X-API-Key")
+        if api_key != settings.admin_api_key:
+            # Allow OPTIONS for CORS
+            if request.method == "OPTIONS":
+                return await call_next(request)
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Invalid or missing API Key"},
+            )
+    return await call_next(request)
 
 # Global Exception Handler
 @app.exception_handler(Exception)

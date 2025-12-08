@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseSettings, Field
 
@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     github_api_url: str = Field(
         default="https://api.github.com", env="GITHUB_API_URL"
     )
+    admin_api_key: Optional[str] = Field(default=None, env="ADMIN_API_KEY")
 
     class Config:
         env_file = ".env"

@@ -17,8 +17,17 @@ LOGGER = get_logger(__name__)
 DATABASE_PATH = Path(__file__).resolve().parents[1] / "data.db"
 DATABASE_URL = f"sqlite+aiosqlite:///{DATABASE_PATH}"
 
+from sqlalchemy.pool import QueuePool
+
 engine: AsyncEngine = create_async_engine(
-    DATABASE_URL, echo=False, future=True, connect_args={"check_same_thread": False}
+    DATABASE_URL, 
+    echo=False, 
+    future=True, 
+    connect_args={"check_same_thread": False},
+    poolclass=QueuePool,
+    pool_size=20,
+    max_overflow=10,
+    pool_timeout=30,
 )
 
 # OPTIMIZATION: Enable Write-Ahead Logging (WAL) for better concurrency

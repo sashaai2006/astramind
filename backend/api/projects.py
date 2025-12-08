@@ -26,7 +26,6 @@ from backend.utils.schemas import (
     ProjectCreate,
     ProjectStatusResponse,
 )
-from backend.sandbox import executor
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -229,17 +228,6 @@ async def chat_with_project(project_id: UUID, payload: ChatRequest) -> dict:
     """Chat with the RefactorAgent to modify the project."""
     response = await refactor_agent.chat(project_id, payload.message, payload.history)
     return {"response": response}
-
-
-@router.post("/{project_id}/run")
-async def run_project(project_id: UUID) -> dict:
-    """Start a web server for the project and return access info."""
-    project_path = _project_path(project_id)
-    if not project_path.exists():
-        raise HTTPException(status_code=404, detail="Project not found")
-    
-    result = await executor.start_web_server(project_path)
-    return result
 
 
 @router.post("/{project_id}/review")

@@ -53,6 +53,21 @@ class Orchestrator:
         self._project_tasks.pop(project_id, None)
         self._stop_events.pop(project_id, None)
 
+    async def shutdown(self) -> None:
+        """Cancel all running project tasks."""
+        LOGGER.info("Shutting down orchestrator, cancelling %d tasks...", len(self._project_tasks))
+        for project_id, task in list(self._project_tasks.items()):
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    LOGGER.info("Project %s task cancelled", project_id)
+                except Exception as e:
+                    LOGGER.error("Error cancelling project %s: %s", project_id, e)
+        self._project_tasks.clear()
+        self._stop_events.clear()
+
     async def request_stop(self, project_id: str) -> None:
         event = self._stop_events.get(project_id)
         if event:
@@ -135,6 +150,27 @@ class Orchestrator:
                 agent="system",
             )
             test_results = await self._tester.test_project(project_id, context)
+            
+            # Self-Correction Loop
+            max_retries = 1
+            retries = 0
+            
+            while not test_results["passed"] and retries < max_retries:
+                retries += 1
+                await self._emit_event(
+                    project_id,
+                    f"Tests failed ({len(test_results['issues'])} issues). Attempting auto-correction ({retries}/{max_retries})...",
+                    agent="system",
+                    level="warning"
+                )
+                
+                await self._developer.auto_correct(context, test_results["issues"], stop_event)
+                
+                # Re-format after fixes
+                await CodeFormatter.format_project(settings.projects_root / str(project_id))
+                
+                # Re-test
+                test_results = await self._tester.test_project(project_id, context)
             
             if not test_results["passed"]:
                 await self._emit_event(

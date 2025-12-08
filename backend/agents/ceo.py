@@ -33,44 +33,47 @@ class CEOAgent:
             f"Target Platform: {target}\n"
             "\n"
             "QUALITY OVER SPEED: Create 5-8 detailed steps for high-quality code.\n"
+            "First, DETERMINE the Tech Stack & Language based on the request (e.g., 'cpp' for C++, 'python' for scripts, 'vanilla' for simple web, 'react' for apps).\n"
             "Break the project into specialized, focused steps. Each step = one clear responsibility.\n"
             "\n"
             "Output JSON:\n"
             "{\n"
-            '  "_thought": "I will create 6 steps for quality: scaffold HTML/CSS (group A), implement core game logic (group A parallel), add rendering (group B), add controls (group B parallel), add features (group C), finalize + docs (sequential)...",\n'
+            '  "_thought": "The user asked for C++. I will use C++ with a Makefile. Step 1: setup...",\n'
+            '  "tech_stack": "cpp",\n'
             '  "steps": [\n'
             '    {\n'
-            '      "name": "scaffold_frontend",\n'
+            '      "name": "setup_environment",\n'
             '      "agent": "developer",\n'
             '      "parallel_group": "setup",\n'
             '      "payload": {\n'
+            '        "tech_stack": "cpp",\n'
             '        "files": [\n'
-            '          {"path": "index.html", "content": "Create main HTML with structure for: [description]. Include canvas/div for game, score display, controls."},\n'
-            '          {"path": "style.css", "content": "Modern styling with dark theme, centered layout, responsive design"}\n'
+            '          {"path": "Makefile", "content": "Standard Makefile for C++ project..."},\n'
+            '          {"path": "main.cpp", "content": "Entry point..."}\n'
             '        ]\n'
             '      }\n'
             '    },\n'
-            '    {"name": "implement_logic", "parallel_group": "setup", "payload": {"files": [...]}},\n'
-            '    {"name": "add_features", "parallel_group": "features", "payload": {"files": [...]}},\n'
-            '    {"name": "finalize", "parallel_group": null, "payload": {"files": [...]}}\n'
+            '    ...\n'
             '  ]\n'
             "}\n"
             "\n"
             "MANDATORY:\n"
-            "1. Create 5-8 steps for quality (more steps = better separation of concerns)\n"
-            "2. Use parallel_group strategically: group A (setup), B (core logic), C (features)\n"
-            "3. Each step: 2-5 files focusing on ONE specific area\n"
-            "4. ALWAYS include index.html in first step for web projects\n"
-            "5. DETAILED instructions: explain WHAT the code should do and HOW (algorithms, data structures)\n"
-            "6. Return ONLY JSON\n"
+            "1. DECIDE Tech Stack explicitly ('cpp', 'python', 'vanilla', 'react', 'rust', 'go', 'java', etc.) based on USER REQUEST. Do NOT default to JS unless requested.\n"
+            "2. Put 'tech_stack' in root JSON + every step payload.\n"
+            "3. Create 5-8 steps for quality.\n"
+            "4. Each step: 2-5 files focusing on ONE specific area.\n"
+            "5. ENTRY POINTS: Include the standard entry point for the chosen stack (e.g., index.html, main.cpp, main.py, main.rs, Main.java).\n"
+            "6. CONFIGURATION: Include the standard build/config file (e.g., package.json, requirements.txt, Makefile, Cargo.toml, pom.xml).\n"
+            "7. DETAILED instructions explaining WHAT and HOW.\n"
+            "8. Return ONLY JSON.\n"
             "\n"
-            "EXAMPLE QUALITY PLAN FOR SNAKE GAME (6 steps):\n"
-            "Step 1: scaffold_ui (group: setup) - index.html, style.css\n"
-            "Step 2: implement_game_state (group: setup parallel) - game.js with state management\n"
-            "Step 3: implement_snake_logic (group: core) - snake.js with movement, growth, collision\n"
-            "Step 4: implement_food_system (group: core parallel) - food.js with random spawn, collision\n"
-            "Step 5: add_rendering (group: features) - renderer.js with canvas/Three.js drawing\n"
-            "Step 6: finalize (group: null) - README, package.json, deployment instructions\n"
+            "EXAMPLE PLAN (Generic):\n"
+            "Step 1: setup (group: setup) - Build files (Makefile/package.json) + Entry point (main.cpp/index.html)\n"
+            "Step 2: core_logic (group: core) - Main business logic classes/modules\n"
+            "Step 3: data_layer (group: core) - Data models/storage handling\n"
+            "Step 4: ui_layer (group: features) - User interface or CLI interaction\n"
+            "Step 5: testing (group: features) - Unit tests and integration tests\n"
+            "Step 6: documentation (group: null) - README.md with run instructions\n"
         )
         adapter = get_llm_adapter()
         try:

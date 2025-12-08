@@ -16,61 +16,6 @@ def _limit_resources() -> None:
     resource.setrlimit(resource.RLIMIT_AS, (MAX_MEMORY_BYTES, MAX_MEMORY_BYTES))
 
 
-async def start_web_server(project_path: Path) -> Dict[str, Any]:
-    """Start a web server for HTML/JS projects. Returns process info."""
-    # Find entry point - check common locations
-    entry_points = [
-        project_path / "index.html",
-        project_path / "public" / "index.html",
-        project_path / "dist" / "index.html",
-        project_path / "src" / "index.html",
-        project_path / "build" / "index.html",
-    ]
-    
-    # Also check for any index.html recursively
-    for html_file in project_path.rglob("index.html"):
-        if html_file not in entry_points:
-            entry_points.append(html_file)
-    
-    serve_dir = None
-    for entry in entry_points:
-        if entry.exists():
-            serve_dir = entry.parent
-            break
-    
-    if not serve_dir:
-        return {"success": False, "error": "No index.html found in project"}
-    
-    # Start http.server on a random available port
-    import random
-    port = random.randint(8080, 8180)
-    cmd = ["python3", "-m", "http.server", str(port)]
-    
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(serve_dir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        
-        # Wait to see if it starts
-        await asyncio.sleep(0.5)
-        
-        if proc.returncode is not None:
-            stderr = await proc.stderr.read() if proc.stderr else b""
-            return {"success": False, "error": stderr.decode("utf-8")}
-        
-        return {
-            "success": True,
-            "pid": proc.pid,
-            "url": f"http://localhost:{port}",
-            "port": port,
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
 async def run_command(
     command: Sequence[str],
     *,

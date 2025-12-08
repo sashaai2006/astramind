@@ -186,7 +186,7 @@ class RefactorAgent:
                     score += 20  # Increased from 10
             
             # Prioritize source code
-            if path_str.endswith(('.py', '.tsx', '.ts', '.js', '.html', '.css', '.cs')):  # Added .cs for C#
+            if path_str.endswith(('.py', '.tsx', '.ts', '.js', '.jsx', '.html', '.css', '.cs', '.cpp', '.c', '.h', '.hpp', '.rs', '.go', '.java', '.php', '.rb')):
                 score += 5
             elif path_str.endswith('.json') or path_str.endswith('.md'):
                 score += 1  # Reduced from 2
@@ -312,28 +312,25 @@ class RefactorAgent:
 
         # Build intent-specific guidance
         intent_guidance = {
-            "convert to C#": (
-                "The user wants to CONVERT existing code to C#. You must:\n"
-                "1. Create new .cs files with C# syntax (using System; namespace; public class)\n"
-                "2. Create a .csproj file if needed\n"
-                "3. Use C# conventions (PascalCase, proper types, LINQ where appropriate)\n"
-                "4. Keep the same logic but adapt to C# idioms\n"
-            ),
-            "convert to Python": "Convert code to Python (.py files, snake_case, proper indentation)",
+            "convert to C#": "Convert code to C# (.cs files). Use proper namespaces and classes.",
+            "convert to Python": "Convert code to Python (.py files). Follow PEP 8.",
+            "convert to Java": "Convert code to Java (.java files). One public class per file.",
+            "convert to Go": "Convert code to Go (.go files). Use 'package main'.",
+            "convert to Rust": "Convert code to Rust (.rs files). Use idiomatic Rust.",
             "fix bugs": "Analyze code for syntax/logic errors and fix them. Keep original language.",
             "optimize code": "Improve performance, remove redundant code, use better algorithms",
             "explain code": "Return detailed explanation in 'message' field. Set 'files' to empty array [].",
             "add new feature": "Create new files or modify existing ones to add the requested functionality",
-            "add tests": "Create test files (e.g., test_*.py, *.test.js) with unit tests",
+            "add tests": "Create test files (e.g., test_*.py, *_test.go, *.test.js) with unit tests",
             "add documentation": "Add comments, docstrings, and README updates",
         }
         
-        guidance = intent_guidance.get(intent, "Understand the request and make appropriate changes")
+        guidance = intent_guidance.get(intent, "Understand the request and make appropriate changes suitable for the existing tech stack.")
 
         return (
             "You are a WORLD-CLASS SOFTWARE ENGINEER and AI CODING ASSISTANT.\n"
             "You have:\n"
-            "- 15+ years of experience across all tech stacks\n"
+            "- 15+ years of experience across all tech stacks (C++, Python, JS, Rust, Go, Java, etc.)\n"
             "- Contributed to Linux kernel, React, Python core libraries\n"
             "- Solved impossible bugs that others gave up on\n"
             "- Reputation for writing clean, elegant, maintainable code\n"
@@ -350,20 +347,21 @@ class RefactorAgent:
             f'"{user_message}"\n'
             "\n"
             "**Your Task:**\n"
-            "1. Interpret the request naturally (like ChatGPT would)\n"
-            "2. If unclear, make intelligent assumptions based on context\n"
-            "3. Be conversational in 'message' (e.g., 'I've converted your game to C# with proper namespaces!')\n"
-            "4. If appropriate, suggest next steps in 'message' (e.g., '...Want me to add unit tests?')\n"
+            "1. Interpret the request naturally.\n"
+            "2. Detect the existing project language/stack from the files provided.\n"
+            "3. If unclear, make intelligent assumptions based on context (e.g., if files are .py, write Python).\n"
+            "4. Be conversational in 'message' (e.g., 'I've refactored the class to be thread-safe!').\n"
+            "5. If appropriate, suggest next steps in 'message'.\n"
             "\n"
             "**Examples of Good Responses:**\n"
             "User: 'перепиши на C#'\n"
-            "You: {\"_thought\": \"User wants C# conversion. I'll create .cs files with proper C# syntax\", \"message\": \"I've converted your Snake game to C#! Created a .NET 6.0 project with all game logic. Want me to add Unity integration?\", \"files\": [...]}\n"
+            "You: {\"_thought\": \"User wants C# conversion...\", \"message\": \"I've converted your code to C#! Created a .NET project...\", \"files\": [...]}\n"
             "\n"
             "User: 'fix this'\n"
-            "You: {\"_thought\": \"User wants bug fixes. I see a missing semicolon in line 10 and wrong variable name\", \"message\": \"Fixed 2 bugs: added missing semicolon and corrected variable name. The code should run now!\", \"files\": [...]}\n"
+            "You: {\"_thought\": \"Found a missing semicolon...\", \"message\": \"Fixed 2 bugs: added missing semicolon...\", \"files\": [...]}\n"
             "\n"
-            "User: 'make it 3D'\n"
-            "You: {\"_thought\": \"User wants 3D version. I'll add Three.js or similar 3D library\", \"message\": \"Upgraded to 3D! Added Three.js scene, camera, and 3D cube rendering. Try it out!\", \"files\": [...]}\n"
+            "User: 'optimize'\n"
+            "You: {\"_thought\": \"Loop is O(n^2)...\", \"message\": \"Optimized the loop to O(n) using a hash map.\", \"files\": [...]}\n"
             "\n"
             "\n"
             "**IMPORTANT: Response Format (JSON ONLY)**\n"

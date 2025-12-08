@@ -1,14 +1,23 @@
-import { useRouter } from "next/router";
-import { useCallback, useEffect, useState, useRef } from "react";
-import FileTree, { FileEntry } from "../../components/FileTree";
-import Editor from "../../components/Editor";
-import ChatPanel, { Message } from "../../components/ChatPanel";
-import DAGView, { Step } from "../../components/DAGView";
-import LogPanel, { LogEvent } from "../../components/LogPanel";
+import React from "react";
+import dynamic from "next/dynamic";
+import { ProjectProvider, useProject } from "../../contexts/ProjectContext";
+import FileTree from "../../components/FileTree";
+import ChatPanel from "../../components/ChatPanel";
+import LogPanel from "../../components/LogPanel";
 import { soundManager } from "../../utils/sound";
 
+// Dynamic imports for heavy components
+const Editor = dynamic(() => import("../../components/Editor"), {
+  loading: () => <div style={{ height: "100%", background: "#1e1e1e", display: "flex", alignItems: "center", justifyContent: "center", color: "#666" }}>Loading Editor...</div>,
+  ssr: false // Editor usually depends on browser APIs
+});
+
+const DAGView = dynamic(() => import("../../components/DAGView"), {
+  loading: () => <div style={{ height: "100%", background: "#1e1e1e", display: "flex", alignItems: "center", justifyContent: "center", color: "#666" }}>Loading Graph...</div>,
+  ssr: false
+});
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
-const WS_BASE = API_BASE.replace("http", "ws");
 
 const languageFromPath = (path: string) => {
   if (path.endsWith(".py")) return "python";
@@ -19,180 +28,27 @@ const languageFromPath = (path: string) => {
   return "plaintext";
 };
 
-export default function ProjectPage() {
-  const router = useRouter();
-  const { id } = router.query;
-  const projectId = id as string | undefined;
-
-  const [files, setFiles] = useState<FileEntry[]>([]);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [fileContent, setFileContent] = useState<string>("");
-  const [version, setVersion] = useState<number>(1);
-  const [logs, setLogs] = useState<LogEvent[]>([]);
-  const [steps, setSteps] = useState<Step[]>([]);
-  const [status, setStatus] = useState<string>("");
-  const [chatHistory, setChatHistory] = useState<Message[]>([]);
-  const [runOutput, setRunOutput] = useState<string>("");
-  const [isRunning, setIsRunning] = useState(false);
-  const [runUrl, setRunUrl] = useState<string | null>(null);
-
-  const [activeTab, setActiveTab] = useState<"editor" | "dag">("editor");
-  
-  // Refs to access latest state in WS callback without re-subscribing
-  const selectedFileRef = useRef(selectedFile);
-  useEffect(() => { selectedFileRef.current = selectedFile; }, [selectedFile]);
-
-  const fetchFiles = useCallback(async () => {
-    if (!projectId) return;
-    const response = await fetch(`${API_BASE}/api/projects/${projectId}/files`);
-    if (response.ok) {
-      setFiles(await response.json());
-    }
-  }, [projectId]);
-
-  const fetchStatus = useCallback(async () => {
-    if (!projectId) return;
-    const response = await fetch(`${API_BASE}/api/projects/${projectId}/status`);
-    if (response.ok) {
-      const data = await response.json();
-      setSteps(data.steps);
-      setStatus(data.status);
-    }
-  }, [projectId]);
-
-  const fetchFileContent = useCallback(
-    async (path: string, versionOverride?: number) => {
-      if (!projectId) return;
-      const versionToUse = versionOverride ?? version;
-      const response = await fetch(
-        `${API_BASE}/api/projects/${projectId}/file?path=${encodeURIComponent(path)}&version=${versionToUse}`,
-      );
-      if (response.ok) {
-        const text = await response.text();
-        setFileContent(text);
-      }
-    },
-    [projectId, version],
-  );
-
-  useEffect(() => {
-    fetchFiles();
-    fetchStatus();
-  }, [fetchFiles, fetchStatus]);
-
-  useEffect(() => {
-    if (selectedFile) {
-      fetchFileContent(selectedFile);
-    }
-  }, [selectedFile, fetchFileContent, version]);
-
-  useEffect(() => {
-    if (!projectId) return;
-    const ws = new WebSocket(`${WS_BASE}/ws/projects/${projectId}`);
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === "event") {
-          setLogs((prev) => [...prev.slice(-199), data]);
-          fetchStatus();
-          if (data.artifact_path) {
-            fetchFiles();
-            soundManager.playSuccess();
-            if (selectedFileRef.current && data.artifact_path === selectedFileRef.current) {
-                 fetchFileContent(selectedFileRef.current);
-            }
-          }
-        }
-      } catch {
-        // ignore malformed events
-      }
-    };
-    return () => ws.close();
-  }, [projectId, fetchStatus, fetchFiles, fetchFileContent]);
-
-  const handleSave = async (content: string) => {
-    if (!projectId || !selectedFile) return;
-    soundManager.playClick();
-    await fetch(`${API_BASE}/api/projects/${projectId}/file`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: selectedFile, content }),
-    });
-    await fetchFiles();
-  };
-
-  const handleChat = async (message: string, history: Message[]) => {
-    if (!projectId) return "Error: No project ID";
-    const response = await fetch(`${API_BASE}/api/projects/${projectId}/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, history }),
-    });
-    if (!response.ok) {
-      throw new Error("Failed to send message");
-    }
-    const data = await response.json();
-    fetchFiles();
-    return data.response;
-  };
-
-
-  // Handle Run Project
-  const handleRun = async () => {
-    if (!projectId) return;
-    soundManager.playClick();
-    setIsRunning(true);
-    setRunOutput("Starting server...\n");
-    
-    try {
-      const response = await fetch(`${API_BASE}/api/projects/${projectId}/run`, {
-        method: "POST",
-      });
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        setRunUrl(result.url);
-        setRunOutput(`✅ Server started!\n\nURL: ${result.url}\nPort: ${result.port}\n\nOpen in new tab to view your project.`);
-        soundManager.playSuccess();
-      } else {
-        setRunOutput(`❌ Failed to start:\n${result.error}`);
-        setIsRunning(false);
-      }
-    } catch (e) {
-      setRunOutput(`❌ Error: ${e}`);
-      setIsRunning(false);
-    }
-  };
-
-  // Handle Deep Review request
-  const handleDeepReview = async () => {
-    if (!projectId || !selectedFile) return;
-    
-    soundManager.playClick();
-    
-    try {
-        const response = await fetch(`${API_BASE}/api/projects/${projectId}/review`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ paths: [selectedFile] }),
-        });
-        
-        if (response.ok) {
-            const result = await response.json();
-            soundManager.playSuccess();
-            
-            // Show result in alert (could be improved with a modal)
-            if (result.approved) {
-                alert(`✅ Code Approved!\n\nNo critical issues found.`);
-            } else {
-                alert(`⚠️ Review Comments:\n\n${result.comments.join('\n\n')}`);
-            }
-        }
-    } catch (e) {
-        console.error(e);
-    }
-  };
+const ProjectContent: React.FC = () => {
+  const {
+    projectId,
+    files,
+    selectedFile,
+    fileContent,
+    version,
+    logs,
+    steps,
+    status,
+    chatHistory,
+    activeTab,
+    setSelectedFile,
+    setVersion,
+    setActiveTab,
+    setChatHistory,
+    fetchFiles,
+    handleSave,
+    handleChat,
+    handleDeepReview
+  } = useProject();
 
   const downloadHref = projectId
     ? `${API_BASE}/api/projects/${projectId}/download?version=${version}`
@@ -249,24 +105,6 @@ export default function ProjectPage() {
               }}
             >
               Execution Graph
-            </button>
-            <button
-              onClick={handleRun}
-              disabled={isRunning}
-              title="Run project in sandbox"
-              style={{
-                padding: "0.5rem 1.5rem",
-                background: isRunning ? "rgba(55, 65, 81, 0.5)" : "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-                color: "white",
-                border: "none",
-                borderRadius: "6px",
-                cursor: isRunning ? "not-allowed" : "pointer",
-                fontWeight: "bold",
-                whiteSpace: "nowrap"
-              }}
-              onMouseEnter={(e) => !isRunning && soundManager.playHover()}
-            >
-              {isRunning ? "⏳ Running..." : "▶️ Run"}
             </button>
           </div>
 
@@ -340,42 +178,6 @@ export default function ProjectPage() {
                        <LogPanel events={logs} />
                     </div>
                   </div>
-
-                  {/* Run Output */}
-                  {runOutput && (
-                    <div className="glass-panel" style={{ padding: "1rem", borderRadius: "8px", maxHeight: "200px", overflowY: "auto" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
-                        <h3 style={{ fontSize: "0.75rem", margin: 0, textTransform: "uppercase", color: "#9ca3af", letterSpacing: "1px" }}>
-                          🖥️ Output
-                        </h3>
-                        {runUrl && (
-                          <a
-                            href={runUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{
-                              fontSize: "0.8rem",
-                              color: "#10b981",
-                              textDecoration: "underline",
-                              cursor: "pointer"
-                            }}
-                            onClick={() => soundManager.playClick()}
-                          >
-                            Open →
-                          </a>
-                        )}
-                      </div>
-                      <pre style={{ 
-                        margin: 0, 
-                        fontSize: "0.75rem", 
-                        color: "#d1d5db", 
-                        whiteSpace: "pre-wrap",
-                        fontFamily: "monospace"
-                      }}>
-                        {runOutput}
-                      </pre>
-                    </div>
-                  )}
                 </div>
               </div>
             ) : (
@@ -394,5 +196,13 @@ export default function ProjectPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function ProjectPage() {
+  return (
+    <ProjectProvider>
+      <ProjectContent />
+    </ProjectProvider>
   );
 }

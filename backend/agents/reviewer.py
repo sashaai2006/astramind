@@ -98,36 +98,32 @@ class ReviewerAgent:
             "   ✓ Edge cases: empty arrays, null values, boundary conditions?\n"
             "\n"
             "3. SECURITY (Critical for production):\n"
-            "   ✓ XSS vulnerabilities? Unescaped user input in HTML?\n"
-            "   ✓ SQL/NoSQL injection risks?\n"
-            "   ✓ Use of dangerous functions (eval, innerHTML, etc)?\n"
-            "   ✓ Sensitive data exposure? Hardcoded secrets?\n"
-            "   ✓ CORS/CSP issues?\n"
+            "   ✓ Input validation? (XSS, Buffer Overflows, SQL Injection)\n"
+            "   ✓ Secure data handling? No hardcoded secrets?\n"
+            "   ✓ Use of safe functions/libraries?\n"
             "\n"
             "4. PERFORMANCE (Important):\n"
-            "   ✓ O(n²) or worse algorithms where O(n) is possible?\n"
-            "   ✓ Memory leaks? Event listeners not cleaned up?\n"
-            "   ✓ Unnecessary re-renders or re-computations?\n"
-            "   ✓ Blocking operations on main thread?\n"
+            "   ✓ Algorithm complexity (avoid O(n²) if O(n) possible)?\n"
+            "   ✓ Resource management (memory leaks, file handles closed)?\n"
+            "   ✓ Efficient I/O operations?\n"
             "\n"
             "5. BEST PRACTICES (Important):\n"
-            "   ✓ Modern patterns? ES6+/Python 3.8+ features used?\n"
+            "   ✓ Standard conventions for the specific language?\n"
             "   ✓ DRY principle? Code duplication?\n"
             "   ✓ SOLID principles? Single Responsibility?\n"
-            "   ✓ Error handling? try/catch where needed?\n"
+            "   ✓ Error handling? (Exceptions, Result types, Error codes)?\n"
             "   ✓ Proper naming? Meaningful variable/function names?\n"
             "\n"
             "6. ARCHITECTURE (Important):\n"
-            "   ✓ Separation of concerns? Logic separate from UI?\n"
-            "   ✓ Modularity? Functions <50 lines?\n"
-            "   ✓ Proper imports/exports? Dependencies clear?\n"
-            "   ✓ Testability? Pure functions where possible?\n"
+            "   ✓ Separation of concerns?\n"
+            "   ✓ Modularity? Small, focused functions/classes?\n"
+            "   ✓ Proper dependency management?\n"
+            "   ✓ Testability?\n"
             "\n"
-            "7. ACCESSIBILITY (for web):\n"
-            "   ✓ Semantic HTML? <button> for buttons, not <div>?\n"
-            "   ✓ ARIA labels for screen readers?\n"
-            "   ✓ Keyboard navigation support?\n"
-            "   ✓ Color contrast sufficient?\n"
+            "7. USABILITY / ACCESSIBILITY (if applicable):\n"
+            "   ✓ Clear user feedback/output?\n"
+            "   ✓ (Web) Semantic HTML and ARIA?\n"
+            "   ✓ (CLI) Helpful help messages and flags?\n"
             "\n"
             "8. MAINTAINABILITY:\n"
             "   ✓ Clear code structure?\n"
@@ -138,23 +134,23 @@ class ReviewerAgent:
             "CRITICAL ANTI-PATTERNS TO REJECT:\n"
             "❌ Placeholder comments: '// Add logic here', '# TODO', '// Implement this'\n"
             "❌ Empty or stub functions that don't do anything\n"
-            "❌ Code that won't run without modifications\n"
+            "❌ Code that won't run/compile without modifications\n"
             "❌ Syntax errors or undefined variables\n"
-            "❌ Missing initialization (e.g., class created but never instantiated)\n"
-            "❌ Obvious security holes (eval, unescaped input)\n"
+            "❌ Missing initialization\n"
+            "❌ Obvious security holes\n"
             "\n"
             "Output strictly valid JSON:\n"
             "{\n"
-            '  "_thought": "Detailed reasoning: I checked X, Y, Z. Found issues A, B. Overall assessment...",\n'
+            '  "_thought": "Detailed reasoning...",\n'
             '  "approved": boolean,\n'
-            '  "score": 0-100 (numeric quality score),\n'
+            '  "score": 0-100,\n'
             '  "comments": [\n'
-            '    "🔴 CRITICAL: game.js line 45 - variable \'player\' used before definition",\n'
-            '    "⚠️  WARNING: index.html - script loaded before DOM ready",\n'
-            '    "💡 SUGGESTION: Use const instead of let for immutable values",\n'
-            '    "✅ GOOD: Excellent error handling in fetchData()"\n'
+            '    "🔴 CRITICAL: Memory leak in loop",\n'
+            '    "⚠️  WARNING: Missing error handling",\n'
+            '    "💡 SUGGESTION: Rename variable for clarity",\n'
+            '    "✅ GOOD: Clean implementation"\n'
             '  ],\n'
-            '  "blocking_issues": ["Issue that MUST be fixed before approval"]\n'
+            '  "blocking_issues": ["Issue that MUST be fixed"]\n'
             "}\n"
             "\n"
             "APPROVAL CRITERIA:\n"

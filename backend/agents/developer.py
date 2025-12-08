@@ -114,6 +114,58 @@ class DeveloperAgent:
              
         await self._broadcast_thought(project_id, f"Step '{step_name}' completed successfully.")
 
+    async def auto_correct(
+        self,
+        context: Dict[str, Any],
+        issues: List[str],
+        stop_event: asyncio.Event,
+    ) -> None:
+        """Attempt to fix the code based on tester issues."""
+        if stop_event.is_set():
+            return
+
+        project_id = context["project_id"]
+        await self._broadcast_thought(project_id, "Attempting to auto-correct issues...", "info")
+        
+        # Read all files to give full context
+        project_context = await self._read_project_context(project_id)
+        
+        prompt = (
+            "You are a senior developer fixing bugs in a project.\n"
+            f"Project: {context['title']}\n"
+            f"Description: {context['description']}\n"
+            "\n"
+            "EXISTING CODE:\n"
+            f"{project_context}\n"
+            "\n"
+            "TESTER ISSUES FOUND (FIX THESE):\n"
+            + "\n".join(f"- {issue}" for issue in issues)
+            + "\n\n"
+            "INSTRUCTIONS:\n"
+            "1. Analyze the issues and the code.\n"
+            "2. Fix the issues by modifying the relevant files.\n"
+            "3. Return the FULL content of the modified files.\n"
+            "4. Output JSON format: {\"files\": [{\"path\": \"...\", \"content\": \"...\"}]}\n"
+            "5. Only include files that you modified.\n"
+            "6. Do not wrap the code in markdown blocks inside the JSON string.\n"
+        )
+        
+        # Reuse _execute_with_retry to handle LLM call and parsing
+        # We construct a dummy step for logging/tracking
+        dummy_step = {"name": "auto_correct"}
+        
+        parsed_response = await self._execute_with_retry(prompt, dummy_step, context)
+        
+        if parsed_response and "files" in parsed_response:
+            file_defs = self._normalize_files(parsed_response["files"], project_id)
+            if file_defs:
+                await self._save_files(project_id, dummy_step, file_defs)
+                await self._broadcast_thought(project_id, f"Applied fixes to {len(file_defs)} files.", "success")
+            else:
+                await self._broadcast_thought(project_id, "LLM returned no files to fix.", "warning")
+        else:
+            await self._broadcast_thought(project_id, "Could not generate fixes.", "warning")
+
     async def _generate_single_file(
         self,
         spec: Dict[str, Any],
@@ -381,6 +433,9 @@ class DeveloperAgent:
         project_context: str = ""
     ) -> str:
         spec = json.dumps(files_spec, indent=2)
+        payload = step.get("payload", {})
+        tech_stack = payload.get("tech_stack", "vanilla").lower()  # Default to vanilla
+
         feedback_section = ""
         if feedback:
             feedback_section = (
@@ -389,31 +444,104 @@ class DeveloperAgent:
                 + "\n"
             )
 
+        # --- DYNAMIC RULES BASED ON STACK ---
+        language_specific_rules = ""
+        tech_stack_lower = tech_stack.lower()
+
+        if "cpp" in tech_stack_lower or "c++" in tech_stack_lower:
+            language_specific_rules = (
+                "LANGUAGE: C++\n"
+                "1. USE HEADER GUARDS: #ifndef FILE_H #define FILE_H ... #endif\n"
+                "2. NO 'using namespace std;' in headers. Use std:: prefix.\n"
+                "3. Main entry point: 'int main() { ... }' in main.cpp\n"
+                "4. Include Makefile or CMakeLists.txt if not present.\n"
+                "5. Use modern C++ features (auto, smart pointers, lambdas) where appropriate.\n"
+                "6. Organize code into .h (declarations) and .cpp (implementations) files.\n"
+            )
+        elif "python" in tech_stack_lower:
+            language_specific_rules = (
+                "LANGUAGE: PYTHON\n"
+                "1. Follow PEP 8 style (indentation, naming).\n"
+                "2. Use 'if __name__ == \"__main__\":' for scripts.\n"
+                "3. Use type hints (def func(a: int) -> str:) for all functions.\n"
+                "4. Include requirements.txt for external dependencies.\n"
+                "5. Use docstrings for modules, classes, and functions.\n"
+            )
+        elif "react" in tech_stack_lower:
+            language_specific_rules = (
+                "TECH STACK: REACT + VITE\n"
+                "1. Use 'import React from \"react\"' where needed.\n"
+                "2. MUST include 'package.json' with 'react', 'react-dom', 'vite' in dependencies.\n"
+                "3. Use functional components and hooks (useState, useEffect).\n"
+                "4. Use 'export default' for main components.\n"
+                "5. Entry point is usually main.jsx/index.jsx mounting to #root.\n"
+            )
+        elif "rust" in tech_stack_lower:
+            language_specific_rules = (
+                "LANGUAGE: RUST\n"
+                "1. Use 'cargo' project structure (src/main.rs, Cargo.toml).\n"
+                "2. Follow Rust idioms (Result/Option, matching, borrowing).\n"
+                "3. Ensure strictly typed code and handle all errors (no .unwrap() in production code).\n"
+                "4. Use 'pub' for public modules/functions.\n"
+            )
+        elif "java" in tech_stack_lower:
+            language_specific_rules = (
+                "LANGUAGE: JAVA\n"
+                "1. Use standard Maven/Gradle project structure (src/main/java).\n"
+                "2. One public class per file, matching filename.\n"
+                "3. Use 'public static void main(String[] args)' for entry point.\n"
+                "4. Follow Java naming conventions (camelCase, PascalCase).\n"
+            )
+        elif "go" in tech_stack_lower or "golang" in tech_stack_lower:
+            language_specific_rules = (
+                "LANGUAGE: GO\n"
+                "1. Use 'package main' for entry point.\n"
+                "2. Follow Go formatting (gofmt style).\n"
+                "3. Handle errors explicitly (if err != nil).\n"
+                "4. Use short variable declarations (:=) inside functions.\n"
+            )
+        elif "vanilla" in tech_stack_lower or "web" in tech_stack_lower:
+            language_specific_rules = (
+                "TECH STACK: VANILLA JS / WEB\n"
+                "1. Use standard DOM API (document.getElementById, addEventListener).\n"
+                "2. Use ES6+ features (const/let, arrow functions, classes).\n"
+                "3. HTML must include <script src='...'></script> at end of body.\n"
+                "4. CSS should be modern (Flexbox, Grid).\n"
+            )
+        else:
+            # Generic / Unknown Stack
+            language_specific_rules = (
+                f"TECH STACK: {tech_stack.upper()}\n"
+                "1. Follow standard conventions and idioms for this language.\n"
+                "2. Ensure proper entry points and configuration files are created.\n"
+                "3. Prioritize clean, readable, and modular code.\n"
+                "4. Handle errors and edge cases gracefully.\n"
+            )
+
         return (
-            "You are a 10x ENGINEER, a LEGENDARY SENIOR SOFTWARE ARCHITECT.\n"
-            "You have:\n"
-            "- Written code for Google, Meta, Netflix production systems\n"
-            "- Mentored 50+ junior developers\n"
-            "- Published open-source libraries with 100K+ stars on GitHub\n"
-            "- Expertise in ALL programming languages and frameworks\n"
+            "You are a 10x ENGINEER, a POLYGLOT SENIOR SOFTWARE ARCHITECT.\n"
+            "You are an expert in C++, Python, Rust, Java, Go, JavaScript, and more.\n"
+            "You choose the BEST tools and patterns for the specific language requested.\n"
             "\n"
             f"Project: {context['title']} ({context['target']})\n"
             f"Full Description: {context['description']}\n"
             f"Your Task: {step.get('name')}\n"
             f"{project_context}\n"
             "\n"
-            "LEGENDARY QUALITY STANDARDS:\n"
-            "You NEVER write placeholder code. You NEVER leave TODOs.\n"
-            "You write COMPLETE, ELEGANT, PRODUCTION-READY code that works flawlessly.\n"
-            "You are PROUD of your code - it should be a masterpiece.\n"
+            f"{language_specific_rules}\n"
+            "\n"
+            "LEGENDARY QUALITY STANDARDS (UNIVERSAL):\n"
+            "1. ENCAPSULATION: Hide implementation details, expose clean interfaces.\n"
+            "2. SOLID PRINCIPLES: Single Responsibility, Open/Closed, etc.\n"
+            "3. ERROR HANDLING: No silent failures. Catch and handle errors appropriate to the language.\n"
+            "4. CLEAN CODE: Meaningful names, small functions, no magic numbers.\n"
+            "5. COMPLETENESS: No TODOs or placeholders. Code must be ready to run.\n"
             "\n"
             "BEFORE SUBMITTING YOUR CODE:\n"
-            "1. MENTALLY RUN through the execution flow\n"
-            "2. CHECK: Does index.html load the right scripts?\n"
-            "3. CHECK: Does main.js/game.js instantiate classes and call init?\n"
-            "4. CHECK: Is there a render loop (requestAnimationFrame or setInterval)?\n"
-            "5. CHECK: Are all variables defined before use?\n"
-            "6. SIMULATE: Walk through user opening index.html - what executes? Does it work?\n"
+            "1. MENTALLY RUN through the execution flow.\n"
+            "2. CHECK: Are all imports/includes correct?\n"
+            "3. CHECK: Are all variables/types defined?\n"
+            "4. SIMULATE: Walk through the execution - does it compile/run?\n"
             "\n"
             "If ANY check fails → FIX IT before submitting.\n"
             "Do NOT write placeholder comments like '// Add logic here' or '// TODO'.\n"
@@ -431,123 +559,12 @@ class DeveloperAgent:
             "3. WORKING CODE: User should be able to run it immediately without modifications\n"
             "4. COMMENTS: Add brief comments only where logic is complex\n"
             "\n"
-            "BEST PRACTICES (Follow religiously!):\n"
-            "✓ JavaScript: Use const/let (never var), async/await, ES6+ features\n"
-            "✓ Error Handling: try/catch for critical operations, validate inputs\n"
-            "✓ DRY: Don't repeat yourself - extract reusable functions\n"
-            "✓ SOLID: Single Responsibility - each class/function does ONE thing\n"
-            "✓ Performance: Avoid O(n²) algorithms, use efficient data structures\n"
-            "✓ Security: Sanitize user inputs, no eval(), proper escaping\n"
-            "✓ Accessibility: Semantic HTML, ARIA labels, keyboard navigation\n"
-            "✓ Modern CSS: Flexbox/Grid, CSS variables, mobile-first responsive\n"
-            "✓ Clean Code: Meaningful names, small functions (<50 lines), no magic numbers\n"
-            "✓ Architecture: Separation of concerns (data/logic/UI), modular structure\n"
-            "\n"
-            "FULL WORKING EXAMPLE (Snake Game with Three.js):\n"
-            "\n"
-            "FILE: index.html\n"
-            "```html\n"
-            "<!DOCTYPE html>\n"
-            "<html><head><title>Game</title></head>\n"
-            "<body>\n"
-            "  <canvas id='game'></canvas>\n"
-            "  <script src='https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'></script>\n"
-            "  <script src='game.js'></script>  <!-- Load AFTER Three.js -->\n"
-            "</body></html>\n"
-            "```\n"
-            "\n"
-            "FILE: game.js\n"
-            "```javascript\n"
-            "// 1. Setup scene\n"
-            "const scene = new THREE.Scene();\n"
-            "const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);\n"
-            "const renderer = new THREE.WebGLRenderer({canvas: document.getElementById('game')});\n"
-            "renderer.setSize(window.innerWidth, window.innerHeight);\n"
-            "camera.position.z = 15;\n"
-            "\n"
-            "// 2. Create game objects\n"
-            "const snake = [];\n"
-            "for(let i=0; i<3; i++) {\n"
-            "  const cube = new THREE.Mesh(\n"
-            "    new THREE.BoxGeometry(1,1,1),\n"
-            "    new THREE.MeshBasicMaterial({color: 0x00ff00})\n"
-            "  );\n"
-            "  cube.position.set(i, 0, 0);\n"
-            "  snake.push(cube);\n"
-            "  scene.add(cube);\n"
-            "}\n"
-            "\n"
-            "// 3. Game loop\n"
-            "function animate() {\n"
-            "  requestAnimationFrame(animate);\n"
-            "  snake[0].position.x += 0.01; // Move snake\n"
-            "  renderer.render(scene, camera);\n"
-            "}\n"
-            "\n"
-            "// 4. START (CRITICAL!)\n"
-            "animate();  // <-- This makes it RUN!\n"
-            "```\n"
-            "\n"
-            "See? EVERY file ends with execution code. Copy this pattern!\n"
-            "\n"
-            "CONCRETE EXAMPLE OF QUALITY CODE:\n"
-            "\n"
-            "❌ BAD (incomplete, won't run):\n"
-            "```javascript\n"
-            "class Game {\n"
-            "  constructor() { this.score = 0; }\n"
-            "  // Add game loop here\n"
-            "}\n"
-            "```\n"
-            "\n"
-            "✅ GOOD (complete, runs immediately):\n"
-            "```javascript\n"
-            "class Game {\n"
-            "  constructor() {\n"
-            "    this.score = 0;\n"
-            "    this.running = true;\n"
-            "  }\n"
-            "  start() {\n"
-            "    this.loop();\n"
-            "  }\n"
-            "  loop() {\n"
-            "    if (!this.running) return;\n"
-            "    this.update();\n"
-            "    this.render();\n"
-            "    requestAnimationFrame(() => this.loop());\n"
-            "  }\n"
-            "  update() { /* game logic */ }\n"
-            "  render() { /* draw */ }\n"
-            "}\n"
-            "// CRITICAL: Always instantiate and start!\n"
-            "const game = new Game();\n"
-            "game.start();\n"
-            "```\n"
-            "\n"
-            "MANDATORY RULES (ENFORCE STRICTLY):\n"
-            "1. ENTRY POINT: Every JavaScript file MUST either:\n"
-            "   a) Export classes/functions (if it's a module), OR\n"
-            "   b) Execute code immediately (if it's a main file)\n"
-            "2. MAIN FILE pattern:\n"
-            "   - Define classes/functions first\n"
-            "   - At the END: instantiate and call: 'const game = new Game(); game.init();'\n"
-            "   - NEVER leave class defined but not instantiated\n"
-            "3. HTML SCRIPT LOADING:\n"
-            "   - Put ALL <script> tags at END of <body>, not in <head>\n"
-            "   - Load dependencies first (Three.js), then your code\n"
-            "   - Example: <script src='lib.js'></script><script src='game.js'></script>\n"
-            "4. INTEGRATION:\n"
-            "   - If creating Snake, Food, Game classes → ensure main file creates all: 'const snake = new Snake(); const food = new Food(); const game = new Game(snake, food);'\n"
-            "5. VERIFY:\n"
-            "   - Mentally trace execution: HTML loads → scripts run → classes instantiate → game starts\n"
-            "   - If trace has gaps → FIX THEM\n"
-            "\n"
             "Output ONLY valid JSON. Format:\n"
             "{\n"
             '  "_thought": "Your step-by-step reasoning here",\n'
             '  "files": [\n'
             '    {\n'
-            '      "path": "path/to/file.js",\n'
+            '      "path": "path/to/file.ext",\n'
             '      "content": "THE ACTUAL CODE AS A STRING - use \\n for newlines, \\\\ for backslashes"\n'
             '    }\n'
             '  ]\n'
@@ -565,7 +582,13 @@ class DeveloperAgent:
 
     def _is_critical_file(self, path: str) -> bool:
         """Determine if a file is critical and should be auto-reviewed."""
-        critical_patterns = ["index.html", "main.js", "main.py", "app.js", "game.js", "App.tsx", "index.tsx"]
+        # Generic critical patterns for most languages
+        critical_patterns = [
+            "index.", "main.", "app.", "server.", "client.",  # Entry points
+            "App.", "Program.", "setup.", "manage.",          # Framework entries
+            "Cargo.toml", "package.json", "requirements.txt", # Configs
+            "Makefile", "CMakeLists.txt", "pom.xml", "build.gradle"
+        ]
         return any(pattern in path for pattern in critical_patterns)
 
     def _normalize_files(

@@ -163,12 +163,18 @@ class TesterAgent:
         """Basic linting checks."""
         issues = []
         
+        has_package_json = (project_path / "package.json").exists()
+        
         for file_entry in iter_file_entries(project_path):
             file_path = str(file_entry)  # Convert FileEntry to string
             if file_path.endswith(('.js', '.ts', '.jsx', '.tsx', '.py')):
                 try:
                     content = read_project_file(project_path, file_path)
                     
+                    # Check for React imports without package.json
+                    if not has_package_json and ('import React' in content or 'from "react"' in content or "from 'react'" in content):
+                        issues.append(f"{file_path}: Uses React but package.json is missing (CRITICAL: Stack mismatch)")
+
                     # Common anti-patterns
                     if 'TODO' in content or 'FIXME' in content:
                         issues.append(f"{file_path}: Contains TODO/FIXME comments")
@@ -201,9 +207,11 @@ class TesterAgent:
         """Test runtime execution."""
         issues = []
         target = context.get("target", "web")
+        # Try to infer stack if not explicit (fallback)
+        is_cpp = any(f.endswith(('.cpp', '.hpp', '.h', '.cc')) for f in iter_file_entries(project_path))
         
         # For web projects, check if HTML loads scripts correctly
-        if target == "web":
+        if target == "web" and not is_cpp:
             index_html = project_path / "index.html"
             if index_html.exists():
                 try:
@@ -229,7 +237,7 @@ class TesterAgent:
                 issues.append("Missing index.html for web project")
         
         # For Python/API projects
-        elif target == "api":
+        elif target == "api" or (project_path / "main.py").exists():
             main_py = project_path / "main.py"
             if main_py.exists():
                 try:
@@ -242,6 +250,26 @@ class TesterAgent:
                         issues.append(f"main.py import failed: {result['stderr'][:200]}")
                 except Exception as e:
                     issues.append(f"Runtime check failed: {e}")
+
+        # For C++ Projects (compilation check)
+        elif is_cpp:
+            try:
+                # Check for Makefile
+                if (project_path / "Makefile").exists():
+                    # Dry run make if possible, or just check syntax
+                    pass 
+                
+                # Try to compile main.cpp if exists
+                main_cpp = project_path / "main.cpp"
+                if main_cpp.exists():
+                    # We might not have g++ in the sandbox, but we can check if file is empty
+                    content = read_project_file(project_path, "main.cpp")
+                    if not content.strip():
+                        issues.append("main.cpp is empty")
+                    if "int main" not in content:
+                        issues.append("main.cpp missing entry point 'int main'")
+            except Exception as e:
+                issues.append(f"C++ check failed: {e}")
 
         return {
             "name": "runtime",
@@ -283,15 +311,15 @@ class TesterAgent:
                 "CRITICAL VALIDATION CHECKLIST:\n"
                 "1. COMPLETENESS: Is ALL functionality implemented? Any TODOs/placeholders?\n"
                 "2. LOGIC: Does the code actually implement the requirements?\n"
-                "3. EXECUTION: Will the code run when user opens it? Is there initialization code?\n"
-                "4. EDGE CASES: Are errors handled? Null checks? Boundary conditions?\n"
-                "5. INTEGRATION: Do files work together? Correct imports/exports?\n"
+                "3. EXECUTION: Will the code run/compile? Is there an entry point?\n"
+                "4. EDGE CASES: Are errors handled? Null/None checks? Boundary conditions?\n"
+                "5. INTEGRATION: Do files work together? Correct imports/includes?\n"
                 "\n"
                 "Respond with ONLY valid JSON:\n"
                 "{\n"
                 '  "_thought": "Your reasoning...",\n'
                 '  "passed": true/false,\n'
-                '  "issues": ["Critical: game.js never calls init()", "Missing error handling in loadData()"]\n'
+                '  "issues": ["Critical: Main function missing", "Missing error handling in data processing"]\n'
                 "}\n"
                 "\n"
                 "Be STRICT but FAIR. Only fail if there are REAL problems that would prevent the code from working."
