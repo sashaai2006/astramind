@@ -7,16 +7,8 @@ RUN apt-get update && apt-get install -y \
 
 RUN curl -fL "https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic@0.15.0/tectonic-0.15.0-x86_64-unknown-linux-gnu.tar.gz" -o /tmp/tectonic.tar.gz
 
-RUN cd /tmp && tar -xzf tectonic.tar.gz
-
-RUN cd /tmp && \
-    TECTONIC_DIR=$(ls -d tectonic-* 2>/dev/null | head -1) && \
-    if [ -z "$TECTONIC_DIR" ]; then \
-        echo "Error: Tectonic directory not found" && \
-        ls -la /tmp && \
-        exit 1; \
-    fi && \
-    mv "$TECTONIC_DIR/tectonic" /usr/local/bin/ && \
+RUN cd /tmp && tar -xzf tectonic.tar.gz && \
+    find . -name "tectonic" -type f -executable -exec mv {} /usr/local/bin/tectonic \; && \
     chmod +x /usr/local/bin/tectonic && \
     rm -rf /tmp/tectonic* && \
     /usr/local/bin/tectonic --version
