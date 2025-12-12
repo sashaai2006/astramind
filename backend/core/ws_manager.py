@@ -6,9 +6,7 @@ from typing import Any, Dict, Mapping, Set, List
 
 from fastapi import WebSocket
 
-
 class WSManager:
-    """Track WebSocket connections per project."""
 
     def __init__(self) -> None:
         self._connections: Dict[str, Set[WebSocket]] = {}
@@ -88,7 +86,6 @@ class WSManager:
                 if conns:
                     for conn in dead_connections:
                         conns.discard(conn)
-
 
 ws_manager = WSManager()
 

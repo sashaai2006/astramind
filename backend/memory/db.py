@@ -43,7 +43,6 @@ async_session_factory = sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False
 )
 
-
 async def init_db() -> None:
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with engine.begin() as conn:
@@ -71,7 +70,6 @@ async def init_db() -> None:
             pass
     LOGGER.info("Database initialised at %s (WAL mode enabled)", DATABASE_PATH)
 
-
 @asynccontextmanager
 async def get_session() -> AsyncIterator[AsyncSession]:
     async with async_session_factory() as session:
@@ -79,7 +77,6 @@ async def get_session() -> AsyncIterator[AsyncSession]:
             yield session
         finally:
             await session.close()
-
 
 async def get_session_dependency() -> AsyncIterator[AsyncSession]:
     async with get_session() as session:

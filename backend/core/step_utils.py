@@ -4,11 +4,7 @@ from collections import OrderedDict
 from typing import Any, Dict, Iterable, List, Tuple
 from uuid import uuid4
 
-
 def group_steps(steps: Iterable[Dict[str, Any]]) -> List[Tuple[str, List[Dict[str, Any]]]]:
-    """
-    Group steps by `parallel_group` (or step id) preserving first-seen order.
-    """
     groups: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
     for step in steps:
         group_key = step.get("parallel_group") or step.get("id") or str(uuid4())

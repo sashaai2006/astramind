@@ -4,7 +4,6 @@ from uuid import UUID, uuid4
 
 from sqlmodel import Column, DateTime, Field, JSON, SQLModel
 
-
 class Project(SQLModel, table=True):
     __tablename__ = "projects"
 
@@ -24,7 +23,6 @@ class Project(SQLModel, table=True):
     agent_preset: Optional[str] = Field(default=None)
     custom_agent_id: Optional[UUID] = Field(default=None, foreign_key="custom_agents.id")
     team_id: Optional[UUID] = Field(default=None, foreign_key="teams.id")
-
 
 class Task(SQLModel, table=True):
     __tablename__ = "tasks"
@@ -47,7 +45,6 @@ class Task(SQLModel, table=True):
         )
     )
 
-
 class Event(SQLModel, table=True):
     __tablename__ = "events"
 
@@ -61,7 +58,6 @@ class Event(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), default=datetime.utcnow)
     )
 
-
 class Artifact(SQLModel, table=True):
     __tablename__ = "artifacts"
 
@@ -73,14 +69,13 @@ class Artifact(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), default=datetime.utcnow)
     )
 
-
 class DocumentProject(SQLModel, table=True):
     __tablename__ = "document_projects"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     title: str
     description: str
-    doc_type: str = Field(default="latex_article")  # latex_article | latex_beamer
+    doc_type: str = Field(default="latex_article")  # latex_article | latex_beamer | gost_explanatory_note | technical_assignment
     status: str = Field(default="creating")  # creating, running, stopped, failed, done
     agent_preset: Optional[str] = Field(default=None)
     custom_agent_id: Optional[UUID] = Field(default=None, foreign_key="custom_agents.id")
@@ -93,7 +88,6 @@ class DocumentProject(SQLModel, table=True):
             DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
         )
     )
-
 
 class DocumentEvent(SQLModel, table=True):
     __tablename__ = "document_events"
@@ -108,7 +102,6 @@ class DocumentEvent(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), default=datetime.utcnow)
     )
 
-
 class DocumentArtifact(SQLModel, table=True):
     __tablename__ = "document_artifacts"
 
@@ -119,7 +112,6 @@ class DocumentArtifact(SQLModel, table=True):
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), default=datetime.utcnow)
     )
-
 
 class CustomAgent(SQLModel, table=True):
     __tablename__ = "custom_agents"
@@ -137,7 +129,6 @@ class CustomAgent(SQLModel, table=True):
         )
     )
 
-
 class Team(SQLModel, table=True):
     __tablename__ = "teams"
 
@@ -153,22 +144,13 @@ class Team(SQLModel, table=True):
         )
     )
 
-
 class TeamAgentLink(SQLModel, table=True):
     __tablename__ = "team_agent_links"
 
     team_id: UUID = Field(foreign_key="teams.id", primary_key=True)
     agent_id: UUID = Field(foreign_key="custom_agents.id", primary_key=True)
 
-
 class TeamMember(SQLModel, table=True):
-    """
-    Team membership that supports BOTH:
-    - custom agents (custom_agent_id)
-    - marketplace presets (preset_id)
-
-    Exactly one of (custom_agent_id, preset_id) should be set.
-    """
 
     __tablename__ = "team_members"
 

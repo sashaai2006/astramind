@@ -32,9 +32,7 @@ def _build_research_query(description: str, target: str, tech_stack: str | None 
     parts.append("best practices 2025")
     return " ".join(p for p in parts if p)
 
-
 async def research_node(state: ProjectState) -> Dict[str, Any]:
-    """Performs web search based on the project description/plan and stores results in state."""
     project_id = state["project_id"]
     settings = get_settings()
     if not getattr(settings, "enable_web_search", True):
@@ -81,9 +79,7 @@ async def research_node(state: ProjectState) -> Dict[str, Any]:
 
     return {"research_results": payload, "research_queries": prev_queries}
 
-
 async def plan_node(state: ProjectState) -> Dict[str, Any]:
-    """Generates the project plan."""
     project_id = state["project_id"]
     description = state["description"]
     target = state["target"]
@@ -208,9 +204,7 @@ async def plan_node(state: ProjectState) -> Dict[str, Any]:
         "status": "generating"
     }
 
-
 async def generate_node(state: ProjectState) -> Dict[str, Any]:
-    """Executes the plan steps."""
     project_id = state["project_id"]
     plan = state["plan"]
     current_idx = state.get("current_step_idx", 0)
@@ -288,7 +282,6 @@ async def generate_node(state: ProjectState) -> Dict[str, Any]:
         "status": "testing"
     }
 
-
 async def _run_single_step(developer, step, context, stop_event, on_message):
     project_id = context["project_id"]
     step_name = step.get("name", "unknown")
@@ -305,9 +298,7 @@ async def _run_single_step(developer, step, context, stop_event, on_message):
         await emit_event(project_id, f"Step {step_name} failed: {e}", agent="developer", level="error")
         raise e
 
-
 async def test_node(state: ProjectState) -> Dict[str, Any]:
-    """Runs tests on the generated project."""
     project_id = state["project_id"]
     await emit_event(project_id, "Formatting code...", agent="system")
     
@@ -339,9 +330,7 @@ async def test_node(state: ProjectState) -> Dict[str, Any]:
         "status": "correcting" if not results["passed"] else "done"
     }
 
-
 async def correct_node(state: ProjectState) -> Dict[str, Any]:
-    """Auto-corrects issues if tests failed."""
     project_id = state["project_id"]
     issues = state["test_results"]["issues"]
     retry_count = state.get("retry_count", 0) + 1
@@ -384,9 +373,7 @@ async def correct_node(state: ProjectState) -> Dict[str, Any]:
         "status": "testing" # Go back to testing
     }
 
-
 async def finalize_node(state: ProjectState) -> Dict[str, Any]:
-    """Marks project as completed."""
     project_id = state["project_id"]
     from uuid import UUID
     
@@ -399,7 +386,6 @@ async def finalize_node(state: ProjectState) -> Dict[str, Any]:
         await db_utils.update_project_status(session, UUID(state["project_id"]), "done")
         
     return {"status": "done"}
-
 
 # --- Graph Construction ---
 

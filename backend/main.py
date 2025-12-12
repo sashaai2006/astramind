@@ -26,7 +26,6 @@ from backend.utils.logging import configure_logging, get_logger
 LOGGER = get_logger(__name__)
 configure_logging()
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -76,7 +75,6 @@ async def lifespan(app: FastAPI):
     # Shutdown logic here if needed
     await orchestrator.shutdown()
     await document_orchestrator.shutdown()
-
 
 app = FastAPI(
     title="AI Company Backend", 

@@ -20,26 +20,7 @@ from .adapter import BaseLLMAdapter
 
 LOGGER = get_logger(__name__)
 
-
 class DeepSeekAdapter(BaseLLMAdapter):
-    """
-    Adapter for DeepSeek API (FREE and POWERFUL!)
-    
-    DeepSeek-V3: 671B MoE model, beats GPT-4o on many benchmarks
-    - Superior reasoning capabilities
-    - Strong coding abilities
-    - Free tier available
-    
-    Models:
-    - deepseek-chat (DeepSeek-V3)
-    - deepseek-coder (specialized for code)
-    
-    Setup:
-    1. Get API key: https://platform.deepseek.com/api_keys
-    2. Set DEEPSEEK_API_KEY env var
-    
-    Free tier: 10M tokens/day
-    """
 
     def __init__(self, model: str = "deepseek-chat"):
         api_key = os.getenv("DEEPSEEK_API_KEY")

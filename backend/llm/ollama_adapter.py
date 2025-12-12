@@ -18,9 +18,7 @@ from .adapter import BaseLLMAdapter
 
 LOGGER = get_logger(__name__)
 
-
 class OllamaLLMAdapter(BaseLLMAdapter):
-    """Invoke local Ollama CLI asynchronously."""
 
     def __init__(self, model: str = "llama3"):
         self.model = model

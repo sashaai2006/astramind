@@ -9,7 +9,6 @@ from backend.core.document_orchestrator import document_orchestrator
 
 router = APIRouter()
 
-
 @router.websocket("/ws/documents/{document_id}")
 async def document_socket(websocket: WebSocket, document_id: str) -> None:
     await document_ws_manager.connect(document_id, websocket)

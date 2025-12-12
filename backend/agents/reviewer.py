@@ -10,9 +10,7 @@ from backend.utils.logging import get_logger
 
 LOGGER = get_logger(__name__)
 
-
 class ReviewerAgent:
-    """Analyzes code and provides constructive criticism."""
 
     def __init__(self) -> None:
         self._adapter = get_llm_adapter()
@@ -23,10 +21,6 @@ class ReviewerAgent:
         task_description: str, 
         files: List[Dict[str, str]]
     ) -> Dict[str, Any]:
-        """
-        Review the provided files against the task description.
-        Returns a dict with 'approved' (bool) and 'comments' (list).
-        """
         prompt = self._build_review_prompt(task_description, files)
         
         LOGGER.info("ReviewerAgent starting code review...")

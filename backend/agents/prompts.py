@@ -3,13 +3,10 @@ import json
 
 from backend.core.presets import get_preset_by_id
 
-
 class PromptBuilder:
-    """Helper to build modular prompts for agents."""
 
     @staticmethod
     def _persona_block(preset_id: str = "", persona_override: str = "") -> str:
-        """Resolve persona prompt from presets, plus optional override."""
         blocks: List[str] = []
         if persona_override and persona_override.strip():
             blocks.append(persona_override.strip())
@@ -30,7 +27,6 @@ class PromptBuilder:
 
     @staticmethod
     def build_developer_system_prompt(preset_id: str = "", persona_override: str = "") -> str:
-        """Build system prompt, injecting persona from presets config if available."""
         return (
             (PromptBuilder._persona_block(preset_id, persona_override) + "\n" if (preset_id or persona_override) else "")
             + "You are a LEGENDARY SOFTWARE ENGINEER.\n"
@@ -66,7 +62,6 @@ class PromptBuilder:
 
     @staticmethod
     def _infer_mode_from_files(files_spec: List[Dict[str, Any]]) -> str:
-        """Infer whether this step is code vs markdown writing vs LaTeX writing."""
         paths: List[str] = []
         for f in files_spec or []:
             p = f.get("path")

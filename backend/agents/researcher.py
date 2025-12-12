@@ -15,7 +15,6 @@ from backend.utils.logging import get_logger
 
 LOGGER = get_logger(__name__)
 
-
 @dataclass
 class SearchResult:
     title: str
@@ -26,15 +25,7 @@ class SearchResult:
     def to_dict(self) -> Dict[str, Any]:
         return {"title": self.title, "url": self.url, "snippet": self.snippet, "source": self.source}
 
-
 class ResearcherAgent:
-    """
-    Web search agent used by the DAG.
-
-    - Primary provider: DuckDuckGo (no key)
-    - Optional fallback: Google Custom Search (requires API key + CSE id)
-    - Caches results in SemanticCache and also stores in ProjectMemory
-    """
 
     def __init__(self) -> None:
         self._settings = get_settings()

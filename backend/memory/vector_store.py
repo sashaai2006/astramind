@@ -1,15 +1,3 @@
-"""
-Векторное хранилище для долгосрочной памяти агентов.
-
-Поддерживает два режима:
-1. ChromaDB (если установлен) - полноценный векторный поиск
-2. SQLite fallback - простой текстовый поиск (BM25-like)
-
-Позволяет:
-- Сохранять контекст проекта (файлы, события, решения)
-- Искать похожий контекст для улучшения качества генерации
-- Семантический кэш запросов
-"""
 from __future__ import annotations
 
 import hashlib
@@ -30,9 +18,7 @@ _USE_CHROMADB = False
 _client = None
 _embedding_function = None
 
-
 def _get_client():
-    """Ленивая инициализация ChromaDB клиента."""
     global _client, _USE_CHROMADB
     if _client is None:
         try:
@@ -62,9 +48,7 @@ def _get_client():
             return None
     return _client
 
-
 def _get_embedding_function():
-    """Ленивая инициализация функции эмбеддингов."""
     global _embedding_function
     if _embedding_function is None and _USE_CHROMADB:
         try:
@@ -83,18 +67,14 @@ def _get_embedding_function():
             return None
     return _embedding_function
 
-
 # ============ SQLite Fallback Implementation ============
 
 def _get_sqlite_db_path() -> Path:
-    """Путь к SQLite базе для fallback."""
     db_path = Path(__file__).parent.parent / "data" / "vector_memory.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     return db_path
 
-
 def _init_sqlite_db():
-    """Инициализация SQLite таблиц."""
     db_path = _get_sqlite_db_path()
     conn = sqlite3.connect(str(db_path))
     cursor = conn.cursor()
@@ -117,9 +97,7 @@ def _init_sqlite_db():
     conn.commit()
     conn.close()
 
-
 def _tokenize(text: str) -> List[str]:
-    """Простая токенизация текста."""
     # Приводим к нижнему регистру и разбиваем на слова
     text = text.lower()
     # Удаляем специальные символы, оставляем буквы и цифры
@@ -133,11 +111,9 @@ def _tokenize(text: str) -> List[str]:
                   'и', 'в', 'на', 'с', 'по', 'из', 'за', 'к', 'для', 'от'}
     return [t for t in tokens if t not in stop_words and len(t) > 2]
 
-
 def _calculate_bm25_score(query_tokens: List[str], doc_tokens: List[str], 
                           doc_freq: Dict[str, int], total_docs: int,
                           avg_doc_len: float, k1: float = 1.5, b: float = 0.75) -> float:
-    """Расчёт BM25 score для документа."""
     score = 0.0
     doc_len = len(doc_tokens)
     doc_token_counts = Counter(doc_tokens)
@@ -162,16 +138,13 @@ def _calculate_bm25_score(query_tokens: List[str], doc_tokens: List[str],
     
     return score
 
-
 class SQLiteFallbackStore:
-    """Fallback хранилище на SQLite с BM25 поиском."""
     
     def __init__(self, collection_name: str):
         self.collection_name = collection_name
         _init_sqlite_db()
     
     def add(self, documents: List[str], ids: List[str], metadatas: List[Dict]) -> None:
-        """Добавить документы."""
         db_path = _get_sqlite_db_path()
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
@@ -187,12 +160,10 @@ class SQLiteFallbackStore:
         conn.close()
     
     def upsert(self, documents: List[str], ids: List[str], metadatas: List[Dict]) -> None:
-        """Добавить или обновить документы."""
         self.add(documents, ids, metadatas)
     
     def query(self, query_texts: List[str], n_results: int = 5, 
               where: Optional[Dict] = None, include: Optional[List[str]] = None) -> Dict:
-        """Поиск документов с использованием BM25."""
         db_path = _get_sqlite_db_path()
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
@@ -262,28 +233,16 @@ class SQLiteFallbackStore:
         
         return {"documents": documents, "metadatas": metadatas, "distances": distances}
 
-
 def _get_fallback_collection(name: str):
-    """Получить fallback коллекцию."""
     return SQLiteFallbackStore(name)
 
-
 class ProjectMemory:
-    """
-    Долгосрочная память для одного проекта.
-    
-    Хранит:
-    - Контекст проекта (описание, цели, решения)
-    - Сгенерированные файлы (для поиска похожего кода)
-    - События и ошибки (для обучения на ошибках)
-    """
     
     def __init__(self, project_id: str):
         self.project_id = project_id
         self._collection = None
     
     def _get_collection(self):
-        """Получить или создать коллекцию для проекта."""
         if self._collection is not None:
             return self._collection
         
@@ -314,14 +273,6 @@ class ProjectMemory:
         context_type: str = "general",
         metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
-        """
-        Добавить контекст в память проекта.
-        
-        Args:
-            content: Текст для сохранения
-            context_type: Тип контекста (file, event, decision, error)
-            metadata: Дополнительные метаданные
-        """
         collection = self._get_collection()
         if collection is None:
             return False
@@ -355,17 +306,6 @@ class ProjectMemory:
         n_results: int = 5,
         context_type: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """
-        Поиск похожего контекста.
-        
-        Args:
-            query: Запрос для поиска
-            n_results: Количество результатов
-            context_type: Фильтр по типу контекста
-        
-        Returns:
-            Список результатов с полями: content, score, metadata
-        """
         collection = self._get_collection()
         if collection is None:
             return []
@@ -398,7 +338,6 @@ class ProjectMemory:
             return []
     
     def add_file(self, path: str, content: str) -> bool:
-        """Добавить файл в память."""
         return self.add_context(
             content=f"FILE: {path}\n\n{content[:5000]}",  # Ограничиваем размер
             context_type="file",
@@ -406,7 +345,6 @@ class ProjectMemory:
         )
     
     def add_event(self, event: str, level: str = "info") -> bool:
-        """Добавить событие в память."""
         return self.add_context(
             content=event,
             context_type="event",
@@ -414,18 +352,12 @@ class ProjectMemory:
         )
     
     def add_decision(self, decision: str, reasoning: str = "") -> bool:
-        """Добавить решение агента в память."""
         return self.add_context(
             content=f"DECISION: {decision}\nREASONING: {reasoning}",
             context_type="decision"
         )
     
     def get_relevant_context(self, task_description: str, max_chars: int = 3000) -> str:
-        """
-        Получить релевантный контекст для задачи.
-        
-        Используется агентами для улучшения качества генерации.
-        """
         results = self.search(task_description, n_results=3)
         
         if not results:
@@ -447,26 +379,13 @@ class ProjectMemory:
         
         return "\n\n---\n\n".join(context_parts)
 
-
 class SemanticCache:
-    """
-    Семантический кэш для LLM запросов.
-    
-    Вместо точного совпадения промпта ищет похожие запросы
-    и возвращает закэшированный ответ если найден достаточно похожий.
-    """
     
     def __init__(self, similarity_threshold: float = 0.85):
-        """
-        Args:
-            similarity_threshold: Порог схожести (0-1). 
-                                  0.85 = очень похожие запросы
-        """
         self.similarity_threshold = similarity_threshold
         self._collection = None
     
     def _get_collection(self):
-        """Получить или создать коллекцию для кэша."""
         if self._collection is not None:
             return self._collection
         
@@ -489,16 +408,6 @@ class SemanticCache:
         return self._collection
     
     def get(self, prompt: str, filter_metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
-        """
-        Поиск похожего запроса в кэше.
-        
-        Args:
-            prompt: Текст запроса
-            filter_metadata: Фильтр по метаданным (например, {"tech_stack": "cpp"})
-            
-        Returns:
-            Закэшированный ответ или None
-        """
         collection = self._get_collection()
         if collection is None:
             return None
@@ -533,9 +442,6 @@ class SemanticCache:
             return None
     
     def set(self, prompt: str, response: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
-        """
-        Сохранить запрос и ответ в кэш.
-        """
         collection = self._get_collection()
         if collection is None:
             return False
@@ -565,7 +471,6 @@ class SemanticCache:
             return False
     
     def clear(self) -> bool:
-        """Очистить кэш."""
         # Пробуем ChromaDB
         client = _get_client()
         if client is not None:
@@ -592,21 +497,15 @@ class SemanticCache:
             LOGGER.error("Ошибка очистки кэша: %s", e)
             return False
 
-
 # Глобальный экземпляр семантического кэша
 _semantic_cache: Optional[SemanticCache] = None
 
-
 def get_semantic_cache() -> SemanticCache:
-    """Получить глобальный экземпляр семантического кэша."""
     global _semantic_cache
     if _semantic_cache is None:
         _semantic_cache = SemanticCache()
     return _semantic_cache
 
-
 def get_project_memory(project_id: str) -> ProjectMemory:
-    """Получить память для проекта."""
     return ProjectMemory(project_id)
-
 

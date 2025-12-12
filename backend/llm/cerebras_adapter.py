@@ -20,26 +20,7 @@ from .adapter import BaseLLMAdapter
 
 LOGGER = get_logger(__name__)
 
-
 class CerebrasAdapter(BaseLLMAdapter):
-    """
-    Adapter for Cerebras Inference API (FASTEST in the world + FREE!)
-    
-    World's fastest AI inference (2000+ tokens/sec)
-    Perfect for rapid prototyping and iteration
-    
-    Available Models (as of Dec 2024):
-    - llama-3.3-70b (recommended - best quality)
-    - llama3.1-8b (fast, lower quality)
-    - qwen-3-32b
-    - gpt-oss-120b
-    
-    Setup:
-    1. Get API key: https://cloud.cerebras.ai/
-    2. Set CEREBRAS_API_KEY env var
-    
-    Free tier: Generous limits for development
-    """
 
     def __init__(self, model: str = "llama-3.3-70b"):
         api_key = os.getenv("CEREBRAS_API_KEY")

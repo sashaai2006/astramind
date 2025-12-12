@@ -18,6 +18,12 @@ from backend.settings import get_settings
 from backend.utils.fileutils import write_files_async
 from backend.utils.json_parser import clean_and_parse_json
 from backend.utils.logging import get_logger
+from backend.utils.gost_templates import (
+    get_gost_prompt_instructions,
+    get_gost_template_hint,
+    get_gost_explanatory_note_template,
+    get_technical_assignment_template,
+)
 
 LOGGER = get_logger(__name__)
 
@@ -195,7 +201,25 @@ async def plan_node(state: DocumentState) -> Dict[str, Any]:
 
     settings = get_settings()
     if settings.llm_mode == "mock":
+        # Return GOST-appropriate outline for GOST documents
+        if doc_type == "gost_explanatory_note":
+            return {
+                "outline": "1) Введение\n2) Назначение и область применения\n3) Технические характеристики\n4) Описание программы\n5) Используемые технические средства\n6) Вызов и загрузка\n7) Входные данные\n8) Выходные данные\n9) Заключение",
+                "status": "writing"
+            }
+        elif doc_type == "technical_assignment":
+            return {
+                "outline": "1) Общие сведения\n2) Основания для разработки\n3) Назначение и цели создания системы\n4) Характеристика объектов автоматизации\n5) Требования к системе\n6) Состав и содержание работ\n7) Порядок контроля и приемки",
+                "status": "writing"
+            }
         return {"outline": "1) Introduction\n2) Main content\n3) Conclusion", "status": "writing"}
+
+    # Add GOST-specific instructions for planning
+    gost_planning_hint = ""
+    is_gost = doc_type in ("gost_explanatory_note", "technical_assignment")
+    if is_gost:
+        gost_planning_hint = get_gost_prompt_instructions(doc_type) + "\n"
+        gost_planning_hint += "При создании плана (outline) используйте стандартную структуру ГОСТ-документа.\n"
 
     prompt = (
         _latex_system_prompt(preset, state.get("persona_prompt"))
@@ -204,6 +228,7 @@ async def plan_node(state: DocumentState) -> Dict[str, Any]:
         + f"Title: {state['title']}\n"
         + f"Description: {state['description']}\n"
         + f"Doc type: {doc_type}\n"
+        + gost_planning_hint
         + "\n"
         + "Return ONLY JSON:\n"
         + "{\n"
@@ -247,10 +272,19 @@ async def write_node(state: DocumentState) -> Dict[str, Any]:
         await write_files_async(root, [{"path": "main.tex", "content": main}])
         return {"main_tex_path": "main.tex", "status": "reviewing"}
 
-    template_hint = "article" if doc_type == "latex_article" else "beamer"
+    # Determine template hint based on doc_type
+    if doc_type == "gost_explanatory_note":
+        template_hint = "Пояснительная записка по ГОСТ 19.101-77"
+    elif doc_type == "technical_assignment":
+        template_hint = "Техническое задание"
+    elif doc_type == "latex_beamer":
+        template_hint = "beamer"
+    else:
+        template_hint = "article"
 
-    # Detect if Russian/Cyrillic content is needed
-    needs_russian = _has_cyrillic(state.get("title", "") + state.get("description", "") + outline)
+    # GOST documents are always in Russian
+    is_gost = doc_type in ("gost_explanatory_note", "technical_assignment")
+    needs_russian = is_gost or _has_cyrillic(state.get("title", "") + state.get("description", "") + outline)
     
     lang_hint = ""
     if needs_russian:
@@ -287,6 +321,11 @@ async def write_node(state: DocumentState) -> Dict[str, Any]:
             "\n"
         )
     
+    # Add GOST-specific instructions if needed
+    gost_instructions = ""
+    if is_gost:
+        gost_instructions = get_gost_prompt_instructions(doc_type) + "\n"
+    
     prompt = (
         _latex_system_prompt(preset, state.get("persona_prompt"))
         + "\n"
@@ -294,6 +333,7 @@ async def write_node(state: DocumentState) -> Dict[str, Any]:
         + f"Document class: {template_hint}\n"
         + f"Title: {state['title']}\n"
         + f"Outline:\n{outline}\n"
+        + gost_instructions
         + lang_hint
         + "\n"
         + "IMPORTANT STRUCTURE RULES:\n"

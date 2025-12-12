@@ -9,7 +9,6 @@ from backend.core.ws_manager import ws_manager
 
 router = APIRouter()
 
-
 @router.websocket("/ws/projects/{project_id}")
 async def project_socket(websocket: WebSocket, project_id: str) -> None:
     await ws_manager.connect(project_id, websocket)

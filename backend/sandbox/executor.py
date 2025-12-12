@@ -10,11 +10,9 @@ from typing import Dict, List, Sequence, Optional
 DEFAULT_TIMEOUT = 10
 MAX_MEMORY_BYTES = 256 * 1024 * 1024
 
-
 def _limit_resources() -> None:
     resource.setrlimit(resource.RLIMIT_CPU, (DEFAULT_TIMEOUT, DEFAULT_TIMEOUT))
     resource.setrlimit(resource.RLIMIT_AS, (MAX_MEMORY_BYTES, MAX_MEMORY_BYTES))
-
 
 async def run_command(
     command: Sequence[str],
@@ -51,17 +49,12 @@ async def run_command(
         "timed_out": timed_out,
     }
 
-
 async def execute_safe(
     command: Sequence[str],
     *,
     timeout_seconds: int = DEFAULT_TIMEOUT,
     cwd: Optional[Path] = None,
 ) -> Dict[str, object]:
-    """
-    Execute a command safely with resource limits.
-    Simplified version for testing purposes.
-    """
     try:
         process = await asyncio.create_subprocess_exec(
             *command,

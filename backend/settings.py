@@ -12,9 +12,7 @@ except ImportError:
     from pydantic import BaseSettings, Field
     PYDANTIC_V2 = False
 
-
 class Settings(BaseSettings):
-    """Runtime configuration loaded from environment variables."""
 
     projects_root: Path = Field(default=Path("./projects"))
     documents_root: Path = Field(default=Path("./documents"))
@@ -62,7 +60,6 @@ class Settings(BaseSettings):
             env_file_encoding = "utf-8"
             case_sensitive = False
             extra = "ignore"
-
 
 @lru_cache
 def get_settings() -> Settings:

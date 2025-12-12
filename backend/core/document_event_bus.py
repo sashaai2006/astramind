@@ -14,7 +14,6 @@ from backend.utils.logging import get_logger
 
 LOGGER = get_logger(__name__)
 
-
 class DocumentEventPayload(BaseModel):
     type: str = Field(default="event")
     timestamp: str
@@ -23,7 +22,6 @@ class DocumentEventPayload(BaseModel):
     level: str = Field(default="info")
     msg: str
     data: Dict[str, Any] = Field(default_factory=dict)
-
 
 async def emit_document_event(
     document_id: str,

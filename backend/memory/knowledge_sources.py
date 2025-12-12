@@ -1,11 +1,3 @@
-"""
-Источники знаний для агентов.
-
-Позволяет подключать:
-- Документацию (Markdown, TXT)
-- API спецификации (OpenAPI/Swagger)
-- Примеры кода (GitHub repos, snippets)
-"""
 from __future__ import annotations
 
 import hashlib
@@ -28,10 +20,8 @@ def _get_vector_store():
         _vector_store = (_get_client, _get_embedding_function)
     return _vector_store
 
-
 @dataclass
 class KnowledgeSource:
-    """Источник знаний."""
     id: str
     name: str
     source_type: str  # "documentation", "api_spec", "code_examples", "custom"
@@ -39,16 +29,7 @@ class KnowledgeSource:
     enabled: bool = True
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-
 class KnowledgeSourceRegistry:
-    """
-    Реестр источников знаний.
-    
-    Позволяет:
-    - Добавлять/удалять источники
-    - Искать релевантные знания по всем источникам
-    - Сохранять источники в векторную БД
-    """
     
     COLLECTION_NAME = "knowledge_sources"
     
@@ -57,7 +38,6 @@ class KnowledgeSourceRegistry:
         self._collection = None
     
     def _get_collection(self):
-        """Получить коллекцию для знаний."""
         if self._collection is not None:
             return self._collection
         
@@ -83,13 +63,11 @@ class KnowledgeSourceRegistry:
         return self._collection
     
     def register_source(self, source: KnowledgeSource) -> bool:
-        """Зарегистрировать источник знаний."""
         self._sources[source.id] = source
         LOGGER.info("Зарегистрирован источник знаний: %s (%s)", source.name, source.source_type)
         return True
     
     def unregister_source(self, source_id: str) -> bool:
-        """Удалить источник знаний."""
         if source_id in self._sources:
             del self._sources[source_id]
             LOGGER.info("Удален источник знаний: %s", source_id)
@@ -97,11 +75,9 @@ class KnowledgeSourceRegistry:
         return False
     
     def get_source(self, source_id: str) -> Optional[KnowledgeSource]:
-        """Получить источник по ID."""
         return self._sources.get(source_id)
     
     def list_sources(self) -> List[KnowledgeSource]:
-        """Список всех источников."""
         return list(self._sources.values())
     
     def add_knowledge(
@@ -111,15 +87,6 @@ class KnowledgeSourceRegistry:
         title: str = "",
         tags: Optional[List[str]] = None
     ) -> bool:
-        """
-        Добавить знания от источника.
-        
-        Args:
-            source_id: ID источника
-            content: Текст знания
-            title: Заголовок (опционально)
-            tags: Теги для фильтрации
-        """
         collection = self._get_collection()
         if collection is None:
             return False
@@ -153,15 +120,6 @@ class KnowledgeSourceRegistry:
         source_ids: Optional[List[str]] = None,
         tags: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
-        """
-        Поиск релевантных знаний.
-        
-        Args:
-            query: Поисковый запрос
-            n_results: Количество результатов
-            source_ids: Фильтр по источникам
-            tags: Фильтр по тегам
-        """
         collection = self._get_collection()
         if collection is None:
             return []
@@ -208,11 +166,6 @@ class KnowledgeSourceRegistry:
         tech_stack: Optional[str] = None,
         max_chars: int = 2000
     ) -> str:
-        """
-        Получить релевантный контекст из всех источников знаний для задачи.
-        
-        Используется агентами для улучшения качества генерации.
-        """
         # Формируем расширенный запрос
         query = task_description
         if tech_stack:
@@ -244,10 +197,8 @@ class KnowledgeSourceRegistry:
         
         return "\n\n---\n\n".join(context_parts)
 
-
 # Предустановленные источники знаний
 def _create_default_sources() -> List[KnowledgeSource]:
-    """Создать базовые источники знаний."""
     return [
         KnowledgeSource(
             id="best_practices",
@@ -281,9 +232,7 @@ def _create_default_sources() -> List[KnowledgeSource]:
         ),
     ]
 
-
 def _populate_default_knowledge(registry: KnowledgeSourceRegistry):
-    """Заполнить реестр базовыми знаниями."""
     
     # Best Practices
     registry.add_knowledge(
@@ -422,13 +371,10 @@ Project Structure:
         tags=["cpp", "modern", "memory"]
     )
 
-
 # Глобальный реестр
 _registry: Optional[KnowledgeSourceRegistry] = None
 
-
 def get_knowledge_registry() -> KnowledgeSourceRegistry:
-    """Получить глобальный реестр источников знаний."""
     global _registry
     if _registry is None:
         _registry = KnowledgeSourceRegistry()

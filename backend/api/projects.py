@@ -36,21 +36,16 @@ LOGGER = get_logger(__name__)
 refactor_agent = RefactorAgent()
 reviewer_agent = ReviewerAgent()
 
-
 class ChatRequest(BaseModel):
     message: str
     history: Optional[List[Dict[str, str]]] = None
 
-
 class DeepReviewRequest(BaseModel):
-    """Request for deep code review."""
     paths: List[str]  # List of file paths to review
-
 
 def _project_path(project_id: UUID) -> Path:
     settings = get_settings()
     return settings.projects_root / str(project_id)
-
 
 @router.get("")
 async def list_projects(
@@ -59,7 +54,6 @@ async def list_projects(
     offset: int = Query(default=0, ge=0),
     search: Optional[str] = Query(default=None),
 ) -> dict:
-    """List all projects with optional search and pagination."""
     from sqlalchemy import select, or_, func
     
     query = select(Project)
@@ -102,7 +96,6 @@ async def list_projects(
         "offset": offset,
     }
 
-
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_project(
     payload: ProjectCreate, session: AsyncSession = Depends(get_session_dependency)
@@ -137,12 +130,10 @@ async def create_project(
 
     return {"project_id": str(project.id), "status": "created"}
 
-
 @router.delete("/{project_id}")
 async def delete_project(
     project_id: UUID, session: AsyncSession = Depends(get_session_dependency)
 ) -> dict:
-    """Delete a project and all its files."""
     import shutil
     
     # Get project from DB
@@ -166,7 +157,6 @@ async def delete_project(
     LOGGER.info("Deleted project %s from database", project_id)
     
     return {"success": True, "message": f"Project {project.title} deleted"}
-
 
 @router.get("/{project_id}/status", response_model=ProjectStatusResponse)
 async def get_status(
@@ -244,14 +234,12 @@ async def get_status(
         ],
     )
 
-
 @router.get("/{project_id}/files", response_model=List[FileEntry])
 async def list_files(project_id: UUID) -> List[FileEntry]:
     project_path = _project_path(project_id)
     if not project_path.exists():
         raise HTTPException(status_code=404, detail="Project not found")
     return fileutils.iter_file_entries(project_path)
-
 
 @router.get("/{project_id}/file")
 async def read_file(
@@ -271,20 +259,13 @@ async def read_file(
         content=data, media_type="application/octet-stream", headers={"X-File": path}
     )
 
-
 @router.post("/{project_id}/chat")
 async def chat_with_project(project_id: UUID, payload: ChatRequest) -> dict:
-    """Chat with the RefactorAgent to modify the project."""
     response = await refactor_agent.chat(project_id, payload.message, payload.history)
     return {"response": response}
 
-
 @router.post("/{project_id}/review")
 async def deep_review(project_id: UUID, payload: DeepReviewRequest) -> dict:
-    """
-    Deep review: run ReviewerAgent on specified files.
-    Returns review comments and approval status.
-    """
     project_path = _project_path(project_id)
     if not project_path.exists():
         raise HTTPException(status_code=404, detail="Project not found")
@@ -348,7 +329,6 @@ async def deep_review(project_id: UUID, payload: DeepReviewRequest) -> dict:
     
     return result
 
-
 @router.get("/{project_id}/download")
 async def download_project(
     project_id: UUID, version: Optional[int] = Query(default=None)
@@ -363,10 +343,8 @@ async def download_project(
         filename=f"project_{project_id}.zip",
     )
 
-
 @router.get("/{project_id}/pdf")
 async def download_project_pdf(project_id: UUID) -> FileResponse:
-    """Generate PDF from Markdown files in the project using LaTeX."""
     import shutil
     from backend.sandbox.executor import execute_safe
     from backend.utils.logging import get_logger
@@ -488,7 +466,6 @@ async def download_project_pdf(project_id: UUID) -> FileResponse:
             detail=f"Failed to generate PDF: {str(e)[:200]}"
         )
 
-
 @router.post("/{project_id}/file")
 async def save_file(
     project_id: UUID,
@@ -525,22 +502,17 @@ async def save_file(
     )
     return {"path": rel_path, "size_bytes": size}
 
-
 # ============ Memory / Knowledge API ============
 
 class MemorySearchRequest(BaseModel):
-    """Request for memory search."""
     query: str
     n_results: int = 5
     context_type: Optional[str] = None  # file, event, decision
 
-
 class MemoryAddRequest(BaseModel):
-    """Request to add memory."""
     content: str
     context_type: str = "general"
     metadata: Optional[Dict[str, str]] = None
-
 
 @router.get("/{project_id}/memory/search")
 async def search_project_memory(
@@ -549,26 +521,15 @@ async def search_project_memory(
     n_results: int = Query(default=5, ge=1, le=20),
     context_type: Optional[str] = Query(default=None),
 ) -> List[Dict]:
-    """
-    Поиск в долгосрочной памяти проекта.
-    
-    Возвращает релевантные документы (файлы, события, решения).
-    """
     memory = get_project_memory(str(project_id))
     results = memory.search(query, n_results=n_results, context_type=context_type)
     return results
-
 
 @router.post("/{project_id}/memory/add")
 async def add_to_project_memory(
     project_id: UUID,
     request: MemoryAddRequest,
 ) -> Dict:
-    """
-    Добавить информацию в память проекта вручную.
-    
-    Полезно для добавления контекста, который агенты не знают автоматически.
-    """
     memory = get_project_memory(str(project_id))
     success = memory.add_context(
         content=request.content,
@@ -577,57 +538,37 @@ async def add_to_project_memory(
     )
     return {"success": success}
 
-
 @router.get("/{project_id}/memory/context")
 async def get_relevant_context(
     project_id: UUID,
     task: str = Query(..., description="Task description to find relevant context for"),
     max_chars: int = Query(default=3000, ge=100, le=10000),
 ) -> Dict:
-    """
-    Получить релевантный контекст для задачи.
-    
-    Используется для улучшения качества генерации кода.
-    """
     memory = get_project_memory(str(project_id))
     context = memory.get_relevant_context(task, max_chars=max_chars)
     return {"context": context, "length": len(context)}
 
-
 @router.delete("/cache/clear")
 async def clear_semantic_cache() -> Dict:
-    """
-    Очистить семантический кэш LLM запросов.
-    
-    Полезно для отладки или принудительного обновления.
-    """
     cache = get_semantic_cache()
     success = cache.clear()
     return {"success": success, "message": "Semantic cache cleared" if success else "Failed to clear cache"}
 
-
 # ============ Knowledge Sources API ============
 
 class KnowledgeAddRequest(BaseModel):
-    """Request to add knowledge to a source."""
     content: str
     title: str = ""
     tags: Optional[List[str]] = None
 
-
 class KnowledgeSearchRequest(BaseModel):
-    """Request to search knowledge."""
     query: str
     n_results: int = 5
     source_ids: Optional[List[str]] = None
     tags: Optional[List[str]] = None
 
-
 @router.get("/knowledge/sources")
 async def list_knowledge_sources() -> List[Dict]:
-    """
-    Список всех источников знаний.
-    """
     registry = get_knowledge_registry()
     sources = registry.list_sources()
     return [
@@ -641,15 +582,11 @@ async def list_knowledge_sources() -> List[Dict]:
         for s in sources
     ]
 
-
 @router.post("/knowledge/sources/{source_id}/add")
 async def add_knowledge_to_source(
     source_id: str,
     request: KnowledgeAddRequest,
 ) -> Dict:
-    """
-    Добавить знания в источник.
-    """
     registry = get_knowledge_registry()
     source = registry.get_source(source_id)
     
@@ -665,12 +602,8 @@ async def add_knowledge_to_source(
     
     return {"success": success}
 
-
 @router.post("/knowledge/search")
 async def search_knowledge(request: KnowledgeSearchRequest) -> List[Dict]:
-    """
-    Поиск по базе знаний.
-    """
     registry = get_knowledge_registry()
     results = registry.search_knowledge(
         query=request.query,
@@ -680,18 +613,12 @@ async def search_knowledge(request: KnowledgeSearchRequest) -> List[Dict]:
     )
     return results
 
-
 @router.get("/knowledge/context")
 async def get_knowledge_context(
     task: str = Query(..., description="Task description"),
     tech_stack: Optional[str] = Query(default=None, description="Technology stack (e.g., python, cpp, react)"),
     max_chars: int = Query(default=2000, ge=100, le=5000),
 ) -> Dict:
-    """
-    Получить релевантные знания для задачи.
-    
-    Используется агентами для улучшения качества генерации.
-    """
     registry = get_knowledge_registry()
     context = registry.get_context_for_task(
         task_description=task,

@@ -15,9 +15,7 @@ from backend.utils.logging import get_logger
 
 LOGGER = get_logger(__name__)
 
-
 class Orchestrator:
-    """Orchestrator using LangGraph for stateful workflow execution."""
 
     def __init__(self) -> None:
         self._compiled_graph = None
@@ -26,7 +24,6 @@ class Orchestrator:
         self._tasks: dict[str, asyncio.Task[None]] = {}
         
     async def _get_graph(self):
-        """Lazy initialization of the graph."""
         async with self._init_lock:
             if self._compiled_graph is None:
                 # Add timeout to prevent hanging on checkpointer/graph creation
@@ -39,7 +36,6 @@ class Orchestrator:
             return self._compiled_graph
 
     def get_stop_event(self, project_id: str) -> asyncio.Event:
-        """Get (or create) the stop event for a project."""
         ev = self._stop_events.get(project_id)
         if ev is None:
             ev = asyncio.Event()
@@ -47,11 +43,6 @@ class Orchestrator:
         return ev
 
     async def request_stop(self, project_id: str) -> None:
-        """
-        Request graceful stop of a running project.
-        - Sets a stop flag checked by workflow nodes
-        - Cancels the background task for faster interruption
-        """
         self.get_stop_event(project_id).set()
         task = self._tasks.get(project_id)
         if task and not task.done():
@@ -60,7 +51,6 @@ class Orchestrator:
     async def async_start(
         self, project_id: UUID, title: str, description: str, target: str
     ) -> None:
-        """Start a new project workflow."""
         project_str = str(project_id)
         LOGGER.info("Starting project %s via LangGraph", project_str)
         
@@ -190,7 +180,6 @@ class Orchestrator:
         task.add_done_callback(lambda _: self._tasks.pop(project_str, None))
 
     async def _run_workflow(self, project_id: str, state: ProjectState = None):
-        """Runs the LangGraph workflow."""
         try:
             graph = await self._get_graph()
             config = {"configurable": {"thread_id": project_id}}
@@ -213,7 +202,6 @@ class Orchestrator:
                 await db_utils.update_project_status(session, UUID(project_id), "failed")
 
     async def resume_project(self, project_id: UUID) -> None:
-        """Resumes an interrupted project from checkpoint."""
         project_str = str(project_id)
         LOGGER.info("Resuming project %s", project_str)
         
@@ -241,7 +229,6 @@ class Orchestrator:
                 await db_utils.update_project_status(session, project_id, "failed")
 
     async def shutdown(self) -> None:
-        """Cleanup resources."""
         await close_checkpointer()
 
     # Legacy method helper for group_steps used by generate_node
@@ -254,6 +241,5 @@ class Orchestrator:
             group_key = step.get("parallel_group") or step.get("id") or str(uuid4())
             groups.setdefault(group_key, []).append(step)
         return list(groups.items())
-
 
 orchestrator = Orchestrator()

@@ -23,11 +23,9 @@ from backend.utils.schemas import DocumentCreate, DocumentStatusResponse, FileEn
 LOGGER = get_logger(__name__)
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
-
 def _document_path(document_id: UUID) -> Path:
     settings = get_settings()
     return settings.documents_root / str(document_id)
-
 
 @router.get("")
 async def list_documents(
@@ -51,7 +49,6 @@ async def list_documents(
         "limit": limit,
         "offset": offset,
     }
-
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_document(
@@ -94,7 +91,6 @@ async def create_document(
 
     return {"document_id": str(doc.id), "status": "created"}
 
-
 @router.get("/{document_id}/status", response_model=DocumentStatusResponse)
 async def get_document_status(
     document_id: UUID, session: AsyncSession = Depends(get_session_dependency)
@@ -110,14 +106,12 @@ async def get_document_status(
         artifacts=[ArtifactInfo(path=a.path, size_bytes=a.size_bytes) for a in artifacts],
     )
 
-
 @router.get("/{document_id}/files", response_model=List[FileEntry])
 async def list_document_files(document_id: UUID) -> List[FileEntry]:
     root = _document_path(document_id)
     if not root.exists():
         raise HTTPException(status_code=404, detail="Document not found")
     return fileutils.iter_file_entries(root)
-
 
 @router.get("/{document_id}/file")
 async def read_document_file(
@@ -132,7 +126,6 @@ async def read_document_file(
     if is_text:
         return PlainTextResponse(data.decode("utf-8"))
     return Response(content=data, media_type="application/octet-stream", headers={"X-File": path})
-
 
 @router.post("/{document_id}/file")
 async def save_document_file(
@@ -163,7 +156,6 @@ async def save_document_file(
     await emit_document_event(str(document_id), f"File {rel_path} saved", agent="editor", data={"artifact_path": rel_path}, persist=False)
 
     return {"path": rel_path, "size_bytes": size}
-
 
 @router.get("/{document_id}/download")
 async def download_pdf(document_id: UUID) -> FileResponse:

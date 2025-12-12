@@ -2,15 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional, TypedDict
 
-
 DocumentStatus = Literal["planning", "writing", "reviewing", "compiling", "done", "failed", "stopped"]
-
 
 class DocumentState(TypedDict):
     document_id: str
     title: str
     description: str
-    doc_type: str  # latex_article | latex_beamer
+    doc_type: str  # latex_article | latex_beamer | gost_explanatory_note | technical_assignment
     agent_preset: Optional[str]
     custom_agent_id: Optional[str]
     team_id: Optional[str]

@@ -1,5 +1,3 @@
-"""CRUD API for teams (collections of custom agents and/or marketplace presets)."""
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -17,20 +15,17 @@ from backend.memory.models import CustomAgent, Team, TeamAgentLink, TeamMember
 
 router = APIRouter(prefix="/api/teams", tags=["teams"])
 
-
 class TeamCreate(BaseModel):
     name: str = PydanticField(min_length=1, max_length=80)
     description: str = PydanticField(default="", max_length=500)
     agent_ids: List[UUID] = PydanticField(default_factory=list, max_length=50)
     preset_ids: List[str] = PydanticField(default_factory=list, max_length=50)
 
-
 class TeamUpdate(BaseModel):
     name: Optional[str] = PydanticField(default=None, min_length=1, max_length=80)
     description: Optional[str] = PydanticField(default=None, max_length=500)
     agent_ids: Optional[List[UUID]] = PydanticField(default=None, max_length=50)
     preset_ids: Optional[List[str]] = PydanticField(default=None, max_length=50)
-
 
 class TeamOut(BaseModel):
     id: UUID
@@ -41,13 +36,11 @@ class TeamOut(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
-
 class TeamListResponse(BaseModel):
     teams: List[TeamOut]
     total: int
     limit: int
     offset: int
-
 
 async def _ensure_agents_exist(session: AsyncSession, agent_ids: List[UUID]) -> None:
     if not agent_ids:
@@ -65,7 +58,6 @@ def _ensure_presets_exist(preset_ids: List[str]) -> None:
     if missing:
         raise HTTPException(status_code=400, detail=f"Unknown preset_ids: {', '.join(missing[:10])}")
 
-
 async def _get_team_members(session: AsyncSession, team_id: UUID) -> tuple[List[UUID], List[str]]:
     # New table (supports custom + presets)
     res = await session.execute(select(TeamMember).where(TeamMember.team_id == team_id))
@@ -80,7 +72,6 @@ async def _get_team_members(session: AsyncSession, team_id: UUID) -> tuple[List[
         agent_ids.add(row[0])
 
     return (sorted(agent_ids), sorted(preset_ids))  # type: ignore[arg-type]
-
 
 @router.get("", response_model=TeamListResponse)
 async def list_teams(
@@ -119,7 +110,6 @@ async def list_teams(
 
     return TeamListResponse(teams=out, total=total, limit=limit, offset=offset)
 
-
 @router.post("", response_model=TeamOut, status_code=status.HTTP_201_CREATED)
 async def create_team(
     payload: TeamCreate,
@@ -151,7 +141,6 @@ async def create_team(
         updated_at=team.updated_at,
     )
 
-
 @router.get("/{team_id}", response_model=TeamOut)
 async def get_team(
     team_id: UUID,
@@ -172,7 +161,6 @@ async def get_team(
         created_at=team.created_at,
         updated_at=team.updated_at,
     )
-
 
 @router.put("/{team_id}", response_model=TeamOut)
 async def update_team(
@@ -227,7 +215,6 @@ async def update_team(
         created_at=team.created_at,
         updated_at=team.updated_at,
     )
-
 
 @router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_team(

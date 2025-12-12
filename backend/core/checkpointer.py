@@ -14,7 +14,6 @@ _saver: AsyncSqliteSaver | None = None
 _conn: aiosqlite.Connection | None = None
 
 async def get_checkpointer() -> AsyncSqliteSaver:
-    """Returns a singleton AsyncSqliteSaver instance."""
     global _saver, _conn
     
     if _saver is not None:
@@ -41,7 +40,6 @@ async def get_checkpointer() -> AsyncSqliteSaver:
         raise
 
 async def close_checkpointer():
-    """Closes the checkpointer connection."""
     global _saver, _conn
     if _conn:
         await _conn.close()

@@ -19,16 +19,13 @@ from backend.utils.logging import get_logger
 
 LOGGER = get_logger(__name__)
 
-
 class RefactorAgent:
-    """Agent that refactors or creates files based on user chat messages."""
 
     def __init__(self) -> None:
         self._adapter = get_llm_adapter()
         self._settings = get_settings()
 
     async def _broadcast_thought(self, project_id: str, msg: str, level: str = "info"):
-        """Helper to broadcast agent thoughts to the UI (fire-and-forget)."""
         # Don't await - fire and forget to avoid blocking
         import asyncio
         asyncio.create_task(
@@ -214,7 +211,6 @@ class RefactorAgent:
         return response_message
 
     def _read_context_files(self, project_path: Path, user_query: str = "") -> str:
-        """Read text files to provide context to LLM with smart selection (ULTRA-LIGHT MODE)."""
         entries = list(iter_file_entries(project_path))[:30]  # Limit to first 30 files for speed
         
         # Scoring function
@@ -297,7 +293,6 @@ class RefactorAgent:
         return "\n\n".join(buffer)
 
     def _detect_intent(self, message: str) -> str:
-        """Detect user intent from natural language."""
         msg_lower = message.lower()
         
         # Convert/Rewrite intent

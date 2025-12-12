@@ -18,41 +18,16 @@ from backend.utils.logging import get_logger
 
 LOGGER = get_logger(__name__)
 
-
 class TesterAgent:
-    """
-    Testing Agent that validates generated code.
-    
-    Capabilities:
-    1. Static analysis (syntax check, linting)
-    2. Runtime validation (run code, check for errors)
-    3. Auto-generate and run tests
-    4. Report issues back to developer for fixes
-    """
 
     def __init__(self) -> None:
         self._adapter = get_llm_adapter()
         self._settings = get_settings()
 
     async def _broadcast_thought(self, project_id: str, msg: str, level: str = "info"):
-        """Helper to broadcast agent thoughts to the UI."""
         await emit_event(project_id, msg, agent="tester", level=level, persist=False)
 
     async def test_project(self, project_id: UUID, context: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Test the entire project and return results.
-        
-        Returns:
-        {
-            "passed": bool,
-            "checks": [
-                {"name": "syntax", "passed": bool, "details": "..."},
-                {"name": "runtime", "passed": bool, "details": "..."},
-                {"name": "logic", "passed": bool, "details": "..."}
-            ],
-            "issues": ["issue1", "issue2", ...]
-        }
-        """
         project_id_str = str(project_id)
         await self._broadcast_thought(project_id_str, "Starting comprehensive testing...")
         
@@ -117,7 +92,6 @@ class TesterAgent:
         }
 
     async def _check_syntax(self, project_path: Path) -> Dict[str, Any]:
-        """Check syntax of all code files."""
         issues = []
         
         for file_entry in iter_file_entries(project_path):
@@ -161,7 +135,6 @@ class TesterAgent:
         }
 
     async def _check_linting(self, project_path: Path) -> Dict[str, Any]:
-        """Basic linting checks."""
         issues = []
         
         has_package_json = (project_path / "package.json").exists()
@@ -206,7 +179,6 @@ class TesterAgent:
         }
 
     async def _check_runtime(self, project_path: Path, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Test runtime execution."""
         issues = []
         target = context.get("target", "web")
         # Try to infer stack if not explicit (fallback)
@@ -308,7 +280,6 @@ class TesterAgent:
         }
 
     async def _check_logic(self, project_path: Path, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Use LLM to validate logic completeness."""
         try:
             # Read all files
             files_content = []
@@ -402,7 +373,6 @@ class TesterAgent:
             }
 
     def _is_critical_file(self, path: str) -> bool:
-        """Determine if file is critical (main entry points)."""
         critical_patterns = ['index.', 'main.', 'app.', 'game.', 'server.']
         return any(pattern in path.lower() for pattern in critical_patterns)
 

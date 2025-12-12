@@ -20,9 +20,7 @@ from .adapter import BaseLLMAdapter
 
 LOGGER = get_logger(__name__)
 
-
 class GroqLLMAdapter(BaseLLMAdapter):
-    """Adapter for Groq API (fast inference) with caching."""
 
     def __init__(self, model: str = "llama-3.1-8b-instant"):
         from backend.settings import get_settings

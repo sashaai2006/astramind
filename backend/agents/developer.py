@@ -30,9 +30,7 @@ def _get_cache():
         _semantic_cache = get_semantic_cache()
     return _semantic_cache
 
-
 class DeveloperAgent:
-    """Transforms LLM JSON instructions into tangible project files."""
 
     def __init__(self, llm_semaphore) -> None:
         self._adapter = get_llm_adapter()
@@ -40,7 +38,6 @@ class DeveloperAgent:
         self._semaphore = llm_semaphore
 
     async def _broadcast_thought(self, project_id: str, msg: str, level: str = "info", agent: str = "developer"):
-        """Helper to broadcast agent thoughts to the UI."""
         # Keep "thoughts" WS-only to avoid DB write amplification
         await emit_event(project_id, msg, agent=agent, level=level, persist=False)
 
@@ -51,7 +48,6 @@ class DeveloperAgent:
         stop_event,
         on_message: Optional[Any] = None,
     ) -> None:
-        """Quality mode: generate code with optional review for critical files."""
         project_id = context["project_id"]
         if stop_event.is_set():
             LOGGER.info("Project %s stop requested; skipping step.", project_id)
@@ -143,7 +139,6 @@ class DeveloperAgent:
         issues: List[str],
         stop_event: asyncio.Event,
     ) -> None:
-        """Attempt to fix the code based on tester issues."""
         if stop_event.is_set():
             return
 
@@ -226,7 +221,6 @@ class DeveloperAgent:
         step: Dict[str, Any],
         stop_event,
     ) -> Dict[str, str]:
-        """Generate a single file using the LLM or Turbo Templates."""
         if stop_event.is_set():
             raise asyncio.CancelledError()
 
@@ -276,7 +270,6 @@ class DeveloperAgent:
         return file_defs[0]
 
     def _get_turbo_template(self, path: str) -> Optional[str]:
-        """Return pre-defined content for standard files."""
         p = Path(path)
         name = p.name
         
@@ -366,9 +359,7 @@ class DeveloperAgent:
 
         return None
 
-
     async def _save_files(self, project_id: str, step: Dict[str, Any], file_defs: List[Dict[str, str]]) -> None:
-        """Save files to disk, record artifacts, and store in vector memory."""
         project_path = self._settings.projects_root / project_id
         project_path.mkdir(parents=True, exist_ok=True)
         project_root = project_path.resolve()
@@ -431,7 +422,6 @@ class DeveloperAgent:
             )
 
     async def _execute_with_retry(self, prompt: str, step: Dict[str, Any], context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Execute LLM call with retries, repair logic, and semantic caching."""
         max_retries = 2
         current_prompt = prompt
         project_id = context["project_id"]
@@ -571,7 +561,6 @@ class DeveloperAgent:
         return None
 
     async def _read_project_context(self, project_id: str) -> str:
-        """Read existing files in the project for context."""
         try:
             from backend.utils.fileutils import iter_file_entries, read_project_file
             
@@ -620,7 +609,6 @@ class DeveloperAgent:
         )
 
     def _is_critical_file(self, path: str) -> bool:
-        """Determine if a file is critical and should be auto-reviewed."""
         # Generic critical patterns for most languages
         critical_patterns = [
             "index.", "main.", "app.", "server.", "client.",  # Entry points

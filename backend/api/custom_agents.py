@@ -1,5 +1,3 @@
-"""CRUD API for user-created agents."""
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -16,18 +14,15 @@ from backend.memory.models import CustomAgent
 
 router = APIRouter(prefix="/api/custom-agents", tags=["custom-agents"])
 
-
 class CustomAgentCreate(BaseModel):
     name: str = PydanticField(min_length=1, max_length=80)
     prompt: str = PydanticField(min_length=1, max_length=20_000)
     tech_stack: List[str] = PydanticField(default_factory=list, max_length=50)
 
-
 class CustomAgentUpdate(BaseModel):
     name: Optional[str] = PydanticField(default=None, min_length=1, max_length=80)
     prompt: Optional[str] = PydanticField(default=None, min_length=1, max_length=20_000)
     tech_stack: Optional[List[str]] = PydanticField(default=None, max_length=50)
-
 
 class CustomAgentOut(BaseModel):
     id: UUID
@@ -37,13 +32,11 @@ class CustomAgentOut(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
-
 class CustomAgentListResponse(BaseModel):
     agents: List[CustomAgentOut]
     total: int
     limit: int
     offset: int
-
 
 @router.get("", response_model=CustomAgentListResponse)
 async def list_custom_agents(
@@ -72,7 +65,6 @@ async def list_custom_agents(
         offset=offset,
     )
 
-
 @router.post("", response_model=CustomAgentOut, status_code=status.HTTP_201_CREATED)
 async def create_custom_agent(
     payload: CustomAgentCreate,
@@ -84,7 +76,6 @@ async def create_custom_agent(
     await session.refresh(agent)
     return CustomAgentOut.model_validate(agent, from_attributes=True)
 
-
 @router.get("/{agent_id}", response_model=CustomAgentOut)
 async def get_custom_agent(
     agent_id: UUID,
@@ -95,7 +86,6 @@ async def get_custom_agent(
     if not agent:
         raise HTTPException(status_code=404, detail="Custom agent not found")
     return CustomAgentOut.model_validate(agent, from_attributes=True)
-
 
 @router.put("/{agent_id}", response_model=CustomAgentOut)
 async def update_custom_agent(
@@ -119,7 +109,6 @@ async def update_custom_agent(
     await session.commit()
     await session.refresh(agent)
     return CustomAgentOut.model_validate(agent, from_attributes=True)
-
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_custom_agent(

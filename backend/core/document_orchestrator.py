@@ -15,7 +15,6 @@ from backend.utils.logging import get_logger
 
 LOGGER = get_logger(__name__)
 
-
 class DocumentOrchestrator:
     def __init__(self) -> None:
         self._compiled_graph = None
@@ -204,7 +203,6 @@ class DocumentOrchestrator:
 
     async def shutdown(self) -> None:
         await close_checkpointer()
-
 
 document_orchestrator = DocumentOrchestrator()
 

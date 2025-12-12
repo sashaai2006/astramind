@@ -20,22 +20,7 @@ from .adapter import BaseLLMAdapter
 
 LOGGER = get_logger(__name__)
 
-
 class GitHubModelsAdapter(BaseLLMAdapter):
-    """
-    Adapter for GitHub Models API (FREE!)
-    
-    Available models:
-    - gpt-4o (OpenAI)
-    - gpt-4o-mini (OpenAI)
-    - claude-3-5-sonnet (Anthropic)
-    - llama-3.1-70b (Meta)
-    - mistral-large (Mistral)
-    
-    Setup:
-    1. Get token: https://github.com/settings/tokens (classic token with read:packages)
-    2. Set GITHUB_TOKEN env var
-    """
 
     def __init__(self, model: str = "gpt-4o"):
         token = os.getenv("GITHUB_TOKEN")
