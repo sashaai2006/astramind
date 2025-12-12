@@ -63,3 +63,9 @@ tsconfig.tsbuildinfo
 # Generated documents (if these are artifacts)
 documents/
 
+# Files that might contain secrets
+*STEPS.txt
+*SECURITY.txt
+*SECRET*.txt
+*KEY*.txt
+
