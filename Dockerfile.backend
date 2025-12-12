@@ -5,12 +5,12 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fL "https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic@0.15.0/tectonic-0.15.0-x86_64-unknown-linux-gnu.tar.gz" -o /tmp/tectonic.tar.gz
-
-RUN cd /tmp && tar -xzf tectonic.tar.gz && \
-    find . -name "tectonic" -type f -executable -exec mv {} /usr/local/bin/tectonic \; && \
+RUN curl -fL "https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic@0.15.0/tectonic-0.15.0-x86_64-unknown-linux-gnu.tar.gz" -o /tmp/tectonic.tar.gz && \
+    cd /tmp && \
+    tar -xzf tectonic.tar.gz && \
+    mv tectonic /usr/local/bin/tectonic && \
     chmod +x /usr/local/bin/tectonic && \
-    rm -rf /tmp/tectonic* && \
+    rm -f tectonic.tar.gz && \
     /usr/local/bin/tectonic --version
 
 WORKDIR /app
