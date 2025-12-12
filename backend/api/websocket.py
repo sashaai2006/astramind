@@ -13,9 +13,17 @@ router = APIRouter()
 @router.websocket("/ws/projects/{project_id}")
 async def project_socket(websocket: WebSocket, project_id: str) -> None:
     await ws_manager.connect(project_id, websocket)
-    await websocket.send_json(
-        {"type": "info", "msg": "connected", "project_id": project_id}
-    )
+    # Send initial connection event in the same format as ProjectEvent
+    from datetime import datetime, timezone
+    await websocket.send_json({
+        "type": "event",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "project_id": project_id,
+        "agent": "system",
+        "level": "info",
+        "msg": "WebSocket connected",
+        "data": {}
+    })
     try:
         while True:
             payload = await websocket.receive_text()

@@ -93,5 +93,5 @@ async def execute_safe(
             "stdout": "",
             "stderr": str(e),
             "timed_out": False,
-        }
+    }
 

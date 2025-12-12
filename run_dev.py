@@ -35,10 +35,7 @@ async def main():
         str(uvicorn_path), 
         "backend.main:app", 
         "--reload",
-        "--reload-exclude", "projects/*",
-        "--reload-exclude", "*.db",
-        "--reload-exclude", "*.db-shm",
-        "--reload-exclude", "*.db-wal",
+        "--reload-dir", "backend",  # Watch ONLY backend folder, ignore projects/
     ]
     procs.append(await asyncio.create_subprocess_exec(*backend_cmd))
     

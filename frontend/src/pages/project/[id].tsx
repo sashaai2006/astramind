@@ -19,6 +19,19 @@ const DAGView = dynamic(() => import("../../components/DAGView"), {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
+const statusColor = (status: string) => {
+  switch (status) {
+    case "done":
+      return "#4ade80";
+    case "failed":
+      return "#ef4444";
+    case "stopped":
+      return "#94a3b8";
+    default:
+      return "#facc15";
+  }
+};
+
 const languageFromPath = (path: string) => {
   if (path.endsWith(".py")) return "python";
   if (path.endsWith(".ts") || path.endsWith(".tsx")) return "typescript";
@@ -53,13 +66,19 @@ const ProjectContent: React.FC = () => {
   const downloadHref = projectId
     ? `${API_BASE}/api/projects/${projectId}/download?version=${version}`
     : undefined;
+  
+  // Check if project has Markdown files for PDF generation
+  const hasMarkdownFiles = files.some(f => !f.is_dir && f.path.endsWith('.md'));
+  const pdfHref = projectId && status === "done" && hasMarkdownFiles
+    ? `${API_BASE}/api/projects/${projectId}/pdf`
+    : undefined;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", color: "#e0e0e0" }}>
       <header style={{ padding: "0.75rem 1rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
           <h1 style={{ margin: 0, fontSize: "1.2rem", fontWeight: 600, letterSpacing: "1px", background: "linear-gradient(90deg, #fff, #aaa)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>AstraMind / {projectId}</h1>
-          <p style={{ margin: 0, fontSize: "0.8rem", color: "#9ca3af" }}>Status: <span style={{ color: status === "done" ? "#4ade80" : "#facc15", fontWeight: "bold" }}>{status.toUpperCase()}</span></p>
+          <p style={{ margin: 0, fontSize: "0.8rem", color: "#9ca3af" }}>Status: <span style={{ color: statusColor(status), fontWeight: "bold" }}>{status.toUpperCase()}</span></p>
         </div>
         <div>
            <a href="/" style={{ fontSize: "0.9rem", color: "#60a5fa", display: "flex", alignItems: "center", gap: "4px" }}>
@@ -156,12 +175,32 @@ const ProjectContent: React.FC = () => {
                       >
                         📦 ZIP
                       </a>
+                      <a
+                        href={pdfHref || "#"}
+                        style={{ 
+                          flex: 1,
+                          textAlign: "center",
+                          padding: "0.5rem",
+                          background: pdfHref ? "linear-gradient(135deg, #ef4444 0%, #dc2626 100%)" : "rgba(55, 65, 81, 0.5)",
+                          color: "white",
+                          borderRadius: "6px",
+                          pointerEvents: pdfHref ? "auto" : "none", 
+                          textDecoration: "none",
+                          fontSize: "0.85rem",
+                          fontWeight: "bold",
+                          border: "1px solid rgba(255,255,255,0.1)"
+                        }}
+                        download
+                        onClick={() => soundManager.playClick()}
+                      >
+                        📄 PDF
+                      </a>
                       <div style={{ 
                         flex: 1,
                         textAlign: "center",
                         padding: "0.5rem",
                         background: "rgba(168, 85, 247, 0.2)",
-                        color: "#c4b5fd",
+                        color: statusColor(status),
                         borderRadius: "6px",
                         fontSize: "0.85rem",
                         border: "1px solid rgba(168, 85, 247, 0.3)"

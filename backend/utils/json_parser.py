@@ -56,10 +56,26 @@ def _repair_and_parse(json_str: str) -> Any:
     if not _looks_complete(json_str):
         raise ValueError("Detected truncated JSON payload while repairing")
 
+    # Common LLM issues:
+    # - trailing commas: {"a": 1,} or [1,2,]
+    # - code-fence remnants already handled by caller
+    candidate = json_str.strip()
+
+    # Remove trailing commas before } or ]
+    candidate = re.sub(r",\s*([}\]])", r"\1", candidate)
+
+    # Try parse again (strict=False allows some control chars)
     try:
-        return json.loads(json_str, strict=False)
-    except json.JSONDecodeError:
-        pass
+        return json.loads(candidate, strict=False)
+    except json.JSONDecodeError as exc:
+        # Second pass: sometimes model wraps JSON with leading/trailing text
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            inner = candidate[start : end + 1].strip()
+            inner = re.sub(r",\s*([}\]])", r"\1", inner)
+            return json.loads(inner, strict=False)  # may raise
+        raise ValueError(f"Could not repair JSON: {exc}") from exc
 
     raise ValueError("Could not repair JSON")
 

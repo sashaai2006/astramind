@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from backend.core.ws_manager import ws_manager
+from backend.core.event_bus import emit_event
 from backend.llm.adapter import get_llm_adapter
 from backend.memory import utils as db_utils
 from backend.memory.db import get_session
@@ -17,6 +17,7 @@ from backend.settings import get_settings
 from backend.utils.fileutils import write_files_async
 from backend.utils.json_parser import clean_and_parse_json
 from backend.utils.logging import get_logger
+from backend.utils.path_normalizer import normalize_artifact_path
 
 LOGGER = get_logger(__name__)
 
@@ -40,17 +41,8 @@ class DeveloperAgent:
 
     async def _broadcast_thought(self, project_id: str, msg: str, level: str = "info", agent: str = "developer"):
         """Helper to broadcast agent thoughts to the UI."""
-        await ws_manager.broadcast(
-            project_id,
-            {
-                "type": "event",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "project_id": project_id,
-                "agent": agent,
-                "level": level,
-                "msg": msg,
-            },
-        )
+        # Keep "thoughts" WS-only to avoid DB write amplification
+        await emit_event(project_id, msg, agent=agent, level=level, persist=False)
 
     async def run(
         self,
@@ -74,30 +66,50 @@ class DeveloperAgent:
         await self._broadcast_thought(project_id, "Generating high-quality code...")
 
         # Generate each file independently to avoid output token limits
+        # Add timeout per file (120s max) to prevent hanging on rate limits
+        async def _generate_with_timeout(spec: Dict[str, Any]) -> Any:
+            path_hint = normalize_artifact_path(spec.get("path", "unknown"))
+            try:
+                return await asyncio.wait_for(
+                    self._generate_single_file(spec, context, step, stop_event),
+                    timeout=120.0
+                )
+            except asyncio.TimeoutError:
+                LOGGER.error("Timeout generating %s (exceeded 120s)", path_hint)
+                raise RuntimeError(f"Timeout generating {path_hint} (exceeded 120s)")
+
         tasks = [
-            self._generate_single_file(spec, context, step, stop_event)
+            _generate_with_timeout(spec)
             for spec in files_spec
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         file_defs: List[Dict[str, str]] = []
+        had_errors = False
         for spec, result in zip(files_spec, results):
             if isinstance(result, Exception):
-                path_value = spec.get("path", "unknown_artifact.txt")
-                LOGGER.error("DeveloperAgent error for %s: %s", path_value, result)
+                path_value = normalize_artifact_path(spec.get("path", "unknown_artifact.txt"))
+                error_msg = str(result)
+                # Extract more useful error info
+                if "RateLimitError" in error_msg or "rate limit" in error_msg.lower():
+                    error_msg = "Rate limit exceeded. Please wait a moment and try again."
+                elif "Timeout" in error_msg:
+                    error_msg = f"Timeout generating {path_value} (took >120s)"
+                
+                LOGGER.error("DeveloperAgent error for %s: %s", path_value, result, exc_info=True)
                 await self._broadcast_thought(
                     project_id,
-                    f"Failed to generate {path_value}: {result}",
+                    f"Failed to generate {path_value}: {error_msg}",
                     "error",
                 )
-                file_defs.append(
-                    {
-                        "path": path_value,
-                        "content": f"// Failed to generate content for {path_value}.\n// Error: {result}",
-                    }
-                )
+                had_errors = True
             else:
                 file_defs.append(result)
+                LOGGER.info("DeveloperAgent successfully generated: %s", result.get("path", "unknown"))
+
+        # Quality-first: if any requested file failed, abort the step rather than writing placeholders.
+        if had_errors:
+            raise RuntimeError("One or more files failed to generate; aborting step to preserve quality.")
 
         # Auto-review critical files for quality
         critical_files = [f for f in file_defs if self._is_critical_file(f["path"])]
@@ -138,27 +150,57 @@ class DeveloperAgent:
         project_id = context["project_id"]
         await self._broadcast_thought(project_id, "Attempting to auto-correct issues...", "info")
         
+        # Filter out non-critical issues (missing dependencies, style issues, etc.)
+        critical_issues = []
+        ignored_patterns = [
+            "missing module", "ModuleNotFoundError", "No module named",
+            "TODO", "FIXME", "placeholder", "stub", "optimization",
+            "style", "documentation", "comment", "warning"
+        ]
+        
+        for issue in issues:
+            issue_lower = issue.lower()
+            # Only include issues that are likely fixable and critical
+            if not any(pattern in issue_lower for pattern in ignored_patterns):
+                critical_issues.append(issue)
+        
+        if not critical_issues:
+            await self._broadcast_thought(
+                project_id, 
+                "No critical issues to fix (only style/dependency warnings).", 
+                "info"
+            )
+            return
+        
+        LOGGER.info("Auto-correcting %d critical issues (filtered from %d total)", len(critical_issues), len(issues))
+        
         # Read all files to give full context
         project_context = await self._read_project_context(project_id)
         
         prompt = (
-            "You are a senior developer fixing bugs in a project.\n"
+            "You are a senior developer fixing CRITICAL bugs in a project.\n"
             f"Project: {context['title']}\n"
             f"Description: {context['description']}\n"
+            f"Tech Stack: {context.get('tech_stack', 'unknown')}\n"
             "\n"
             "EXISTING CODE:\n"
             f"{project_context}\n"
             "\n"
-            "TESTER ISSUES FOUND (FIX THESE):\n"
-            + "\n".join(f"- {issue}" for issue in issues)
+            "CRITICAL ISSUES TO FIX:\n"
+            + "\n".join(f"- {issue}" for issue in critical_issues)
             + "\n\n"
             "INSTRUCTIONS:\n"
-            "1. Analyze the issues and the code.\n"
+            "1. Analyze ONLY the critical issues listed above.\n"
             "2. Fix the issues by modifying the relevant files.\n"
-            "3. Return the FULL content of the modified files.\n"
-            "4. Output JSON format: {\"files\": [{\"path\": \"...\", \"content\": \"...\"}]}\n"
-            "5. Only include files that you modified.\n"
-            "6. Do not wrap the code in markdown blocks inside the JSON string.\n"
+            "3. Return the FULL content of ALL modified files (not just diffs).\n"
+            "4. Ensure code compiles and has correct syntax.\n"
+            "5. Output JSON format: {\"files\": [{\"path\": \"...\", \"content\": \"...\"}]}\n"
+            "6. Only include files that you actually modified.\n"
+            "7. Do not wrap the code in markdown blocks inside the JSON string.\n"
+            "8. Make sure all imports are correct and functions are properly defined.\n"
+            "\n"
+            "IMPORTANT: If an issue cannot be fixed (e.g., missing external dependency), "
+            "do not include it in the fixes. Only fix syntax errors, missing functions, and logic errors."
         )
         
         # Reuse _execute_with_retry to handle LLM call and parsing
@@ -189,7 +231,7 @@ class DeveloperAgent:
             raise asyncio.CancelledError()
 
         project_id = context["project_id"]
-        path_value = spec.get("path", "unknown_artifact.txt")
+        path_value = normalize_artifact_path(spec.get("path", "unknown_artifact.txt"))
 
         # --- TURBO TEMPLATES START ---
         # Instant return for common config files
@@ -199,18 +241,34 @@ class DeveloperAgent:
             return {"path": path_value, "content": turbo_content}
         # --- TURBO TEMPLATES END ---
 
+        # Log which file we're generating (helps debug hangs)
+        await self._broadcast_thought(project_id, f"Generating {path_value}...", "info")
+        LOGGER.info("DeveloperAgent generating file: %s", path_value)
+
         # Read project context (existing files) for better coherence
         project_context = await self._read_project_context(project_id)
         
         prompt = self._build_prompt(context, step, [spec], project_context=project_context)
         parsed_response = await self._execute_with_retry(prompt, step, context)
+        
+        if not parsed_response:
+            error_msg = (
+                f"LLM failed to generate {path_value} after all retries. "
+                "This may be due to rate limits or API issues. "
+                "Please check your API provider limits or try again later."
+            )
+            LOGGER.error(error_msg)
+            raise RuntimeError(error_msg)
+        
         file_defs = self._normalize_files(
             parsed_response.get("files") if parsed_response else [],
             project_id,
         )
 
         if not file_defs:
-            raise RuntimeError(f"LLM returned no content for {path_value}")
+            error_msg = f"LLM returned no files for {path_value} (parsed_response had no 'files' key)"
+            LOGGER.error(error_msg)
+            raise RuntimeError(error_msg)
 
         for file_def in file_defs:
             if file_def["path"] == path_value:
@@ -228,18 +286,18 @@ class DeveloperAgent:
                 "compilerOptions": {
                     "target": "es5",
                     "lib": ["dom", "dom.iterable", "esnext"],
-                    "allowJs": true,
-                    "skipLibCheck": true,
-                    "strict": true,
-                    "forceConsistentCasingInFileNames": true,
-                    "noEmit": true,
-                    "esModuleInterop": true,
+                    "allowJs": True,
+                    "skipLibCheck": True,
+                    "strict": True,
+                    "forceConsistentCasingInFileNames": True,
+                    "noEmit": True,
+                    "esModuleInterop": True,
                     "module": "esnext",
                     "moduleResolution": "node",
-                    "resolveJsonModule": true,
-                    "isolatedModules": true,
+                    "resolveJsonModule": True,
+                    "isolatedModules": True,
                     "jsx": "preserve",
-                    "incremental": true,
+                    "incremental": True,
                     "plugins": [{"name": "next"}],
                     "paths": {"@/*": ["./*"]}
                 },
@@ -317,8 +375,14 @@ class DeveloperAgent:
         
         await self._broadcast_thought(project_id, f"Writing {len(file_defs)} files to disk...")
         
+        # Normalize paths (no .txt) before writing
+        normalized_defs: List[Dict[str, str]] = [
+            {"path": normalize_artifact_path(f.get("path", "")), "content": f.get("content", "")}
+            for f in file_defs
+        ]
+        
         # Use async write
-        saved = await write_files_async(project_path, file_defs)
+        saved = await write_files_async(project_path, normalized_defs)
         
         # Helper to get size async
         def get_file_info(path: Path, root: Path):
@@ -340,7 +404,7 @@ class DeveloperAgent:
         # 🧠 Сохраняем файлы в векторную память для долгосрочного контекста
         try:
             memory = get_project_memory(project_id)
-            for file_def in file_defs:
+            for file_def in normalized_defs:
                 path = file_def.get("path", "")
                 content = file_def.get("content", "")
                 # Сохраняем только код (не слишком большие файлы)
@@ -350,47 +414,53 @@ class DeveloperAgent:
             LOGGER.warning("Failed to save files to memory: %s", e)
             # Продолжаем без сохранения в память
 
-        # Batch WebSocket broadcasts using gather
-        tasks = []
-        timestamp = datetime.now(timezone.utc).isoformat()
+        # Batch event notifications (WS-only; avoid DB amplification)
         agent_name = step.get("agent", "developer")
-        
-        for rel_path in relative_paths:
-            tasks.append(ws_manager.broadcast(
-                project_id,
-                {
-                    "type": "event",
-                    "timestamp": timestamp,
-                    "project_id": project_id,
-                    "agent": agent_name,
-                    "level": "info",
-                    "msg": f"Artifact saved: {rel_path}",
-                    "artifact_path": rel_path,
-                },
-            ))
-        
-        if tasks:
-            await asyncio.gather(*tasks)
+        if relative_paths:
+            await asyncio.gather(
+                *(
+                    emit_event(
+                        project_id,
+                        f"Artifact saved: {rel_path}",
+                        agent=agent_name,
+                        data={"artifact_path": rel_path},
+                        persist=False,
+                    )
+                    for rel_path in relative_paths
+                )
+            )
 
     async def _execute_with_retry(self, prompt: str, step: Dict[str, Any], context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Execute LLM call with retries, repair logic, and semantic caching."""
         max_retries = 2
         current_prompt = prompt
         project_id = context["project_id"]
-        
-        # 1. Проверяем семантический кэш
-        cache = _get_cache()
-        cached_response = cache.get(prompt)
-        if cached_response:
-            await self._broadcast_thought(project_id, "📦 Using cached response (semantic match)", "info")
+        rate_limit_backoffs = [10, 20, 40]  # seconds (in addition to adapter-level retries)
+        rate_limit_attempt = 0
+
+        def _is_rate_limit_error(exc: Exception) -> bool:
+            # Avoid hard dependency on provider SDKs in agent layer.
             try:
-                parsed = clean_and_parse_json(cached_response)
-                if isinstance(parsed, dict) and "files" in parsed:
-                    return parsed
-                elif isinstance(parsed, list):
-                    return {"files": parsed}
+                from tenacity import RetryError  # type: ignore[import-not-found]
+                if isinstance(exc, RetryError):
+                    last = exc.last_attempt.exception()
+                    if last and last.__class__.__name__ == "RateLimitError":
+                        return True
             except Exception:
-                pass  # Кэш невалидный, продолжаем с LLM
+                pass
+            name = exc.__class__.__name__
+            if name == "RateLimitError":
+                return True
+            txt = (str(exc) or "").lower()
+            return ("rate limit" in txt) or ("ratelimit" in txt) or ("RateLimitError" in repr(exc))
+        
+        # Get tech_stack for cache key
+        tech_stack = context.get("tech_stack") or step.get("payload", {}).get("tech_stack", "")
+        
+        # 1. SEMANTIC CACHE - DISABLED BY USER REQUEST
+        # cache = _get_cache()
+        # cache_filter = {"tech_stack": tech_stack} if tech_stack else None
+        # ... (cache logic removed to prevent stale responses)
         
         # 2. Добавляем контекст из долгосрочной памяти (с обработкой ошибок)
         try:
@@ -406,38 +476,51 @@ class DeveloperAgent:
             LOGGER.warning("Failed to load memory context: %s", e)
             # Продолжаем без памяти
         
-        # 3. Добавляем знания из базы знаний (best practices, style guides)
-        try:
-            tech_stack = context.get("tech_stack") or step.get("payload", {}).get("tech_stack")
-            knowledge_registry = get_knowledge_registry()
-            knowledge_context = knowledge_registry.get_context_for_task(
-                task_description=f"{context.get('title', '')} {step.get('name', '')}",
-                tech_stack=tech_stack,
-                max_chars=1500
-            )
-            if knowledge_context:
-                current_prompt = f"{current_prompt}\n\n--- RELEVANT KNOWLEDGE (Best Practices) ---\n{knowledge_context}"
-                await self._broadcast_thought(project_id, "📚 Found relevant knowledge from best practices", "info")
-        except Exception as e:
-            LOGGER.warning("Failed to load knowledge context: %s", e)
-            # Продолжаем без знаний
-        
-        for attempt in range(max_retries + 1):
+        # 3. LLM Call with Retry Loop
+        attempt = 0
+        while attempt <= max_retries:
+            step_name = step.get("name", "unknown")
             LOGGER.info(
-                "Calling LLM adapter (mode=%s) for step %s (attempt %d/%d)",
+                "Calling LLM adapter (mode=%s) for step '%s' (attempt %d/%d)",
                 self._settings.llm_mode,
-                step.get("name"),
+                step_name,
                 attempt + 1,
-                max_retries + 1
+                max_retries + 1,
             )
             
             if attempt > 0:
                 await self._broadcast_thought(project_id, f"Retrying LLM generation (attempt {attempt + 1}/{max_retries + 1})...", "warning")
 
-            async with self._semaphore:
-                completion = await self._adapter.acomplete(current_prompt, json_mode=True)
+            try:
+                LOGGER.debug("Acquiring semaphore for LLM call...")
+                async with self._semaphore:
+                    LOGGER.debug("Semaphore acquired, calling LLM adapter...")
+                    completion = await self._adapter.acomplete(current_prompt, json_mode=True)
+                    LOGGER.debug("LLM adapter returned (length=%d)", len(completion or ""))
+            except Exception as exc:
+                exc_name = exc.__class__.__name__
+                exc_msg = str(exc)
+                LOGGER.warning("LLM call failed: %s: %s", exc_name, exc_msg[:200])
+                
+                # If the provider exhausted its internal retries (tenacity RetryError), do a cooldown here.
+                if _is_rate_limit_error(exc) and rate_limit_attempt < len(rate_limit_backoffs):
+                    wait_s = rate_limit_backoffs[rate_limit_attempt]
+                    rate_limit_attempt += 1
+                    LOGGER.info("Rate limit detected, waiting %ds before retry...", wait_s)
+                    await self._broadcast_thought(
+                        project_id,
+                        f"Rate limit hit. Cooling down for {wait_s}s and retrying…",
+                        "warning",
+                    )
+                    await asyncio.sleep(wait_s)
+                    # Retry same attempt (do not consume a JSON-repair retry)
+                    continue
+                
+                # Re-raise to be handled by outer retry loop
+                LOGGER.error("LLM call failed after rate-limit handling: %s", exc, exc_info=True)
+                raise
             
-            LOGGER.info("LLM response received (length=%d)", len(completion))
+            LOGGER.info("LLM response received (length=%d chars)", len(completion or ""))
             
             try:
                 parsed = clean_and_parse_json(completion)
@@ -445,13 +528,14 @@ class DeveloperAgent:
                     if "_thought" in parsed:
                         await self._broadcast_thought(project_id, f"Developer thought: {parsed['_thought']}", "info")
                     
-                    # 3. Сохраняем успешный результат в кэш
-                    try:
-                        cache.set(prompt, completion)
-                    except Exception as e:
-                        LOGGER.warning("Failed to cache response: %s", e)
+                    # Save to cache - DISABLED
+                    # try:
+                    #     cache_meta = {"tech_stack": tech_stack} if tech_stack else None
+                    #     cache.set(cache_key_prompt, completion, metadata=cache_meta)
+                    # except Exception as e:
+                    #     LOGGER.warning("Failed to cache response: %s", e)
                     
-                    # 4. Сохраняем решение в память проекта
+                    # Save decision to memory
                     try:
                         memory = get_project_memory(project_id)
                         memory.add_decision(
@@ -463,7 +547,7 @@ class DeveloperAgent:
                     
                     return parsed
                 elif isinstance(parsed, list):
-                    cache.set(prompt, completion)
+                    # cache.set(cache_key_prompt, completion) - DISABLED
                     return {"files": parsed}
                 else:
                     raise ValueError("JSON is valid but does not contain 'files' or is not a list")
@@ -471,13 +555,17 @@ class DeveloperAgent:
                 LOGGER.warning("JSON parse failed on attempt %d: %s", attempt + 1, exc)
                 if attempt < max_retries:
                     await self._broadcast_thought(project_id, "Received invalid JSON from LLM. Attempting auto-repair...", "warning")
+                    # Keep original task context, then request a corrected JSON payload.
                     current_prompt = (
-                        "The previous response was invalid JSON. Please fix it.\n"
-                        f"Error: {exc}\n"
-                        "Return ONLY valid JSON with 'files' array.\n"
-                        "Previous response was:\n"
-                        f"{completion[:2000]}" 
+                        prompt
+                        + "\n\n=== IMPORTANT: YOUR PREVIOUS RESPONSE WAS INVALID JSON ===\n"
+                        + f"Error: {exc}\n"
+                        + "Return ONLY valid JSON with a top-level 'files' array.\n"
+                        + "Do NOT add any text before/after the JSON.\n"
+                        + "\n--- Previous (invalid) response ---\n"
+                        + completion[:3000]
                     )
+                    attempt += 1
                     continue
         
         return None
@@ -497,12 +585,14 @@ class DeveloperAgent:
             
             for file_path in list(iter_file_entries(project_path))[:max_files]:
                 try:
-                    content = await asyncio.to_thread(read_project_file, project_path, file_path)
-                    if content and len(content) < max_size:
-                        context_files.append(f"FILE: {file_path}\n```\n{content[:max_size]}\n```")
+                    data, is_text = await asyncio.to_thread(read_project_file, project_path, file_path.path)
+                    if is_text:
+                        content = data.decode("utf-8")
+                        if content and len(content) < max_size:
+                            context_files.append(f"FILE: {file_path.path}\n```\n{content[:max_size]}\n```")
                 except:
                     continue
-            
+        
             if context_files:
                 return "\n\nEXISTING PROJECT FILES (for context):\n" + "\n\n".join(context_files)
             return ""
@@ -516,154 +606,17 @@ class DeveloperAgent:
         step: Dict[str, Any], 
         files_spec: List[Dict[str, Any]],
         feedback: List[str] = [],
-        project_context: str = ""
+        project_context: str = "",
+        knowledge_context: str = "" # Added param
     ) -> str:
-        spec = json.dumps(files_spec, indent=2)
-        payload = step.get("payload", {})
-        tech_stack = payload.get("tech_stack", "vanilla").lower()  # Default to vanilla
-
-        feedback_section = ""
-        if feedback:
-            feedback_section = (
-                "\nCRITICAL FEEDBACK FROM REVIEWER (You MUST fix these issues):\n"
-                + "\n".join(f"- {f}" for f in feedback)
-                + "\n"
-            )
-
-        # --- DYNAMIC RULES BASED ON STACK ---
-        language_specific_rules = ""
-        tech_stack_lower = tech_stack.lower()
-
-        if "cpp" in tech_stack_lower or "c++" in tech_stack_lower:
-            language_specific_rules = (
-                "LANGUAGE: C++\n"
-                "1. USE HEADER GUARDS: #ifndef FILE_H #define FILE_H ... #endif\n"
-                "2. NO 'using namespace std;' in headers. Use std:: prefix.\n"
-                "3. Main entry point: 'int main() { ... }' in main.cpp\n"
-                "4. Include Makefile or CMakeLists.txt if not present.\n"
-                "5. Use modern C++ features (auto, smart pointers, lambdas) where appropriate.\n"
-                "6. Organize code into .h (declarations) and .cpp (implementations) files.\n"
-            )
-        elif "python" in tech_stack_lower:
-            language_specific_rules = (
-                "LANGUAGE: PYTHON\n"
-                "1. Follow PEP 8 style (indentation, naming).\n"
-                "2. Use 'if __name__ == \"__main__\":' for scripts.\n"
-                "3. Use type hints (def func(a: int) -> str:) for all functions.\n"
-                "4. Include requirements.txt for external dependencies.\n"
-                "5. Use docstrings for modules, classes, and functions.\n"
-            )
-        elif "react" in tech_stack_lower:
-            language_specific_rules = (
-                "TECH STACK: REACT + VITE\n"
-                "1. Use 'import React from \"react\"' where needed.\n"
-                "2. MUST include 'package.json' with 'react', 'react-dom', 'vite' in dependencies.\n"
-                "3. Use functional components and hooks (useState, useEffect).\n"
-                "4. Use 'export default' for main components.\n"
-                "5. Entry point is usually main.jsx/index.jsx mounting to #root.\n"
-            )
-        elif "rust" in tech_stack_lower:
-            language_specific_rules = (
-                "LANGUAGE: RUST\n"
-                "1. Use 'cargo' project structure (src/main.rs, Cargo.toml).\n"
-                "2. Follow Rust idioms (Result/Option, matching, borrowing).\n"
-                "3. Ensure strictly typed code and handle all errors (no .unwrap() in production code).\n"
-                "4. Use 'pub' for public modules/functions.\n"
-            )
-        elif "java" in tech_stack_lower:
-            language_specific_rules = (
-                "LANGUAGE: JAVA\n"
-                "1. Use standard Maven/Gradle project structure (src/main/java).\n"
-                "2. One public class per file, matching filename.\n"
-                "3. Use 'public static void main(String[] args)' for entry point.\n"
-                "4. Follow Java naming conventions (camelCase, PascalCase).\n"
-            )
-        elif "go" in tech_stack_lower or "golang" in tech_stack_lower:
-            language_specific_rules = (
-                "LANGUAGE: GO\n"
-                "1. Use 'package main' for entry point.\n"
-                "2. Follow Go formatting (gofmt style).\n"
-                "3. Handle errors explicitly (if err != nil).\n"
-                "4. Use short variable declarations (:=) inside functions.\n"
-            )
-        elif "vanilla" in tech_stack_lower or "web" in tech_stack_lower:
-            language_specific_rules = (
-                "TECH STACK: VANILLA JS / WEB\n"
-                "1. Use standard DOM API (document.getElementById, addEventListener).\n"
-                "2. Use ES6+ features (const/let, arrow functions, classes).\n"
-                "3. HTML must include <script src='...'></script> at end of body.\n"
-                "4. CSS should be modern (Flexbox, Grid).\n"
-            )
-        else:
-            # Generic / Unknown Stack
-            language_specific_rules = (
-                f"TECH STACK: {tech_stack.upper()}\n"
-                "1. Follow standard conventions and idioms for this language.\n"
-                "2. Ensure proper entry points and configuration files are created.\n"
-                "3. Prioritize clean, readable, and modular code.\n"
-                "4. Handle errors and edge cases gracefully.\n"
-            )
-
-        return (
-            "You are a 10x ENGINEER, a POLYGLOT SENIOR SOFTWARE ARCHITECT.\n"
-            "You are an expert in C++, Python, Rust, Java, Go, JavaScript, and more.\n"
-            "You choose the BEST tools and patterns for the specific language requested.\n"
-            "\n"
-            f"Project: {context['title']} ({context['target']})\n"
-            f"Full Description: {context['description']}\n"
-            f"Your Task: {step.get('name')}\n"
-            f"{project_context}\n"
-            "\n"
-            f"{language_specific_rules}\n"
-            "\n"
-            "LEGENDARY QUALITY STANDARDS (UNIVERSAL):\n"
-            "1. ENCAPSULATION: Hide implementation details, expose clean interfaces.\n"
-            "2. SOLID PRINCIPLES: Single Responsibility, Open/Closed, etc.\n"
-            "3. ERROR HANDLING: No silent failures. Catch and handle errors appropriate to the language.\n"
-            "4. CLEAN CODE: Meaningful names, small functions, no magic numbers.\n"
-            "5. COMPLETENESS: No TODOs or placeholders. Code must be ready to run.\n"
-            "\n"
-            "BEFORE SUBMITTING YOUR CODE:\n"
-            "1. MENTALLY RUN through the execution flow.\n"
-            "2. CHECK: Are all imports/includes correct?\n"
-            "3. CHECK: Are all variables/types defined?\n"
-            "4. SIMULATE: Walk through the execution - does it compile/run?\n"
-            "\n"
-            "If ANY check fails → FIX IT before submitting.\n"
-            "Do NOT write placeholder comments like '// Add logic here' or '// TODO'.\n"
-            "Do NOT write partial implementations.\n"
-            "EVERY file must be fully functional and executable.\n"
-            "\n"
-            "Below are file specifications with natural language instructions.\n"
-            "REPLACE the 'content' field with ACTUAL working code:\n"
-            f"{spec}\n"
-            f"{feedback_section}"
-            "\n"
-            "QUALITY REQUIREMENTS:\n"
-            "1. COMPLETENESS: Write 100% of the code, not sketches or placeholders\n"
-            "2. BEST PRACTICES: Use modern patterns, error handling, proper structure\n"
-            "3. WORKING CODE: User should be able to run it immediately without modifications\n"
-            "4. COMMENTS: Add brief comments only where logic is complex\n"
-            "\n"
-            "Output ONLY valid JSON. Format:\n"
-            "{\n"
-            '  "_thought": "Your step-by-step reasoning here",\n'
-            '  "files": [\n'
-            '    {\n'
-            '      "path": "path/to/file.ext",\n'
-            '      "content": "THE ACTUAL CODE AS A STRING - use \\n for newlines, \\\\ for backslashes"\n'
-            '    }\n'
-            '  ]\n'
-            "}\n"
-            "\n"
-            "CRITICAL RULES:\n"
-            "1. The 'content' field MUST be a JSON STRING, not an object or array.\n"
-            "2. All newlines in code must be escaped as \\n\n"
-            "3. All quotes in code must be escaped as \\\"\n"
-            "4. All backslashes must be escaped as \\\\\n"
-            "5. Do NOT wrap code in curly braces - just put the raw code string.\n"
-            "6. Do NOT include markdown formatting or code blocks.\n"
-            "7. Return ONLY the JSON object, nothing else."
+        from backend.agents.prompts import PromptBuilder
+        return PromptBuilder.assemble_prompt(
+            context,
+            step,
+            files_spec,
+            feedback,
+            project_context,
+            knowledge_context
         )
 
     def _is_critical_file(self, path: str) -> bool:
@@ -693,7 +646,7 @@ class DeveloperAgent:
                 LOGGER.warning("DeveloperAgent skipping file without valid path: %s", file)
                 continue
 
-            safe_path = path_value.strip()
+            safe_path = normalize_artifact_path(path_value.strip())
             if not safe_path or ".." in Path(safe_path).parts:
                 LOGGER.warning("DeveloperAgent skipping unsafe path: %s", path_value)
                 continue
@@ -710,6 +663,17 @@ class DeveloperAgent:
                 continue
 
             content_str = str(content_value)
+            if len(content_str) > 400_000:
+                LOGGER.error(
+                    "DeveloperAgent received oversized content for %s (%d chars); skipping",
+                    safe_path,
+                    len(content_str),
+                )
+                continue
+
+            # Ensure trailing newline for text artifacts (stabilizes diffs/tools)
+            if content_str and not content_str.endswith("\n"):
+                content_str += "\n"
             
             # Sanity check: content should not start with '{' unless it's JSON/JS object
             if content_str.startswith('{"') and not safe_path.endswith('.json'):

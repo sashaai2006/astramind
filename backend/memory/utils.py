@@ -6,7 +6,15 @@ from uuid import UUID
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Artifact, Event, Project, Task
+from .models import (
+    Artifact,
+    DocumentArtifact,
+    DocumentEvent,
+    DocumentProject,
+    Event,
+    Project,
+    Task,
+)
 
 
 async def get_project(session: AsyncSession, project_id: UUID) -> Optional[Project]:
@@ -147,3 +155,64 @@ async def update_project_status(
     await session.commit()
     result = await session.execute(select(Project).where(Project.id == project_id))
     return result.scalar_one()
+
+
+async def get_document_project(session: AsyncSession, document_id: UUID) -> Optional[DocumentProject]:
+    result = await session.execute(select(DocumentProject).where(DocumentProject.id == document_id))
+    return result.scalar_one_or_none()
+
+
+async def list_document_projects(session: AsyncSession, *, limit: int = 50, offset: int = 0) -> List[DocumentProject]:
+    result = await session.execute(
+        select(DocumentProject).order_by(DocumentProject.created_at.desc()).limit(limit).offset(offset)
+    )
+    return list(result.scalars().all())
+
+
+async def update_document_status(session: AsyncSession, document_id: UUID, status: str) -> DocumentProject:
+    await session.execute(
+        update(DocumentProject).where(DocumentProject.id == document_id).values(status=status)
+    )
+    await session.commit()
+    result = await session.execute(select(DocumentProject).where(DocumentProject.id == document_id))
+    return result.scalar_one()
+
+
+async def record_document_event(
+    session: AsyncSession,
+    document_id: UUID,
+    message: str,
+    *,
+    agent: Optional[str] = None,
+    level: str = "info",
+    data: Optional[Dict[str, Any]] = None,
+    commit: bool = True,
+) -> DocumentEvent:
+    event = DocumentEvent(
+        document_id=document_id,
+        agent=agent,
+        level=level,
+        message=message,
+        data=data or {},
+    )
+    session.add(event)
+    if commit:
+        await session.commit()
+        await session.refresh(event)
+    return event
+
+
+async def add_document_artifacts(
+    session: AsyncSession, document_id: UUID, paths: Iterable[str], sizes: Iterable[int]
+) -> None:
+    for path, size in zip(paths, sizes):
+        artifact = DocumentArtifact(document_id=document_id, path=path, size_bytes=size)
+        session.add(artifact)
+    await session.commit()
+
+
+async def list_document_artifacts(session: AsyncSession, document_id: UUID) -> List[DocumentArtifact]:
+    result = await session.execute(
+        select(DocumentArtifact).where(DocumentArtifact.document_id == document_id)
+    )
+    return list(result.scalars().all())

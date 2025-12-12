@@ -1,18 +1,24 @@
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 
 ProjectTarget = Literal["web", "api", "telegram"]
-ProjectStatus = Literal["creating", "running", "failed", "done"]
+ProjectStatus = Literal["creating", "running", "stopped", "failed", "done"]
+
+AgentPreset = str
 
 
 class ProjectCreate(BaseModel):
     title: str
     description: str
     target: ProjectTarget
+    agent_preset: Optional[AgentPreset] = None
+    custom_agent_id: Optional[UUID] = None
+    team_id: Optional[UUID] = None
 
 
 class TaskStep(BaseModel):
@@ -33,6 +39,25 @@ class ProjectStatusResponse(BaseModel):
     project_id: str
     status: ProjectStatus
     steps: List[TaskStep]
+    artifacts: List[ArtifactInfo]
+
+
+DocumentType = Literal["latex_article", "latex_beamer"]
+DocumentStatus = Literal["creating", "running", "stopped", "failed", "done"]
+
+
+class DocumentCreate(BaseModel):
+    title: str
+    description: str
+    doc_type: DocumentType = "latex_article"
+    agent_preset: Optional[AgentPreset] = None
+    custom_agent_id: Optional[UUID] = None
+    team_id: Optional[UUID] = None
+
+
+class DocumentStatusResponse(BaseModel):
+    document_id: str
+    status: DocumentStatus
     artifacts: List[ArtifactInfo]
 
 

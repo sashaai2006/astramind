@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -13,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.agents.refactor import RefactorAgent
 from backend.agents.reviewer import ReviewerAgent
 from backend.core.orchestrator import orchestrator
-from backend.core.ws_manager import ws_manager
+from backend.core.event_bus import emit_event
 from backend.memory import utils as db_utils
 from backend.memory.db import get_session_dependency
 from backend.memory.models import Project
@@ -111,6 +112,9 @@ async def create_project(
         description=payload.description,
         target=payload.target,
         status="creating",
+        agent_preset=payload.agent_preset,
+        custom_agent_id=payload.custom_agent_id,
+        team_id=payload.team_id,
     )
     session.add(project)
     await session.commit()
@@ -172,12 +176,50 @@ async def get_status(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    tasks = await db_utils.list_tasks(session, project_id)
     artifacts = await db_utils.list_artifacts(session, project_id)
-    return ProjectStatusResponse(
-        project_id=str(project.id),
-        status=project.status,  # type: ignore[arg-type]
-        steps=[
+    
+    # Try to get steps from LangGraph state first
+    steps = []
+    try:
+        from backend.core.orchestrator import orchestrator
+        
+        graph = await orchestrator._get_graph()
+        config = {"configurable": {"thread_id": str(project_id)}}
+        snapshot = await graph.aget_state(config)
+        
+        if snapshot.values and "plan" in snapshot.values:
+            plan = snapshot.values.get("plan", [])
+            current_idx = snapshot.values.get("current_step_idx", 0)
+            project_status = snapshot.values.get("status", project.status)
+            
+            # Convert plan to steps format
+            for idx, step_data in enumerate(plan):
+                step_name = step_data.get("name", f"Step {idx + 1}")
+                payload = step_data.get("payload", {})
+                agent = payload.get("agent", "developer")
+                parallel_group = step_data.get("parallel_group")
+                
+                # Determine step status based on current_idx
+                if idx < current_idx:
+                    step_status = "done"
+                elif idx == current_idx and project_status in ["generating", "testing", "correcting"]:
+                    step_status = "running"
+                else:
+                    step_status = "pending"
+                
+                steps.append({
+                    "id": step_data.get("id", str(uuid4())),
+                    "name": step_name,
+                    "agent": agent,
+                    "status": step_status,
+                    "parallel_group": parallel_group,
+                    "payload": payload,
+                })
+    except Exception as e:
+        LOGGER.warning("Failed to read LangGraph state for project %s: %s. Falling back to tasks table.", project_id, e)
+        # Fallback to tasks table for old projects
+        tasks = await db_utils.list_tasks(session, project_id)
+        steps = [
             {
                 "id": str(task.id),
                 "name": task.name,
@@ -187,7 +229,12 @@ async def get_status(
                 "payload": task.payload,
             }
             for task in tasks
-        ],
+        ]
+    
+    return ProjectStatusResponse(
+        project_id=str(project.id),
+        status=project.status,  # type: ignore[arg-type]
+        steps=steps,
         artifacts=[
             {
                 "path": artifact.path,
@@ -259,16 +306,11 @@ async def deep_review(project_id: UUID, payload: DeepReviewRequest) -> dict:
         raise HTTPException(status_code=400, detail="No valid files to review")
     
     # Broadcast that review is starting
-    await ws_manager.broadcast(
+    await emit_event(
         str(project_id),
-        {
-            "type": "event",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "project_id": str(project_id),
-            "agent": "reviewer",
-            "level": "info",
-            "msg": f"Deep review started for {len(files_to_review)} files...",
-        },
+        f"Deep review started for {len(files_to_review)} files...",
+        agent="reviewer",
+        data={"files_count": len(files_to_review)},
     )
     
     # Run review (parallel if multiple files)
@@ -296,16 +338,12 @@ async def deep_review(project_id: UUID, payload: DeepReviewRequest) -> dict:
     
     # Broadcast result
     level = "info" if result.get("approved") else "warning"
-    await ws_manager.broadcast(
+    await emit_event(
         str(project_id),
-        {
-            "type": "event",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "project_id": str(project_id),
-            "agent": "reviewer",
-            "level": level,
-            "msg": f"Review complete. Approved: {result.get('approved')}. Comments: {len(result.get('comments', []))}",
-        },
+        f"Review complete. Approved: {result.get('approved')}. Comments: {len(result.get('comments', []))}",
+        agent="reviewer",
+        level=level,
+        data={"approved": bool(result.get("approved")), "comments_count": len(result.get("comments", []))},
     )
     
     return result
@@ -326,6 +364,131 @@ async def download_project(
     )
 
 
+@router.get("/{project_id}/pdf")
+async def download_project_pdf(project_id: UUID) -> FileResponse:
+    """Generate PDF from Markdown files in the project using LaTeX."""
+    import shutil
+    from backend.sandbox.executor import execute_safe
+    from backend.utils.logging import get_logger
+    from backend.utils.markdown_to_latex import create_latex_document
+    from backend.core.document_graph import _has_cyrillic
+    
+    LOGGER = get_logger(__name__)
+    project_path = _project_path(project_id)
+    if not project_path.exists():
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Find all Markdown files
+    md_files = sorted(project_path.glob("*.md"))
+    # Auto-migrate legacy .txt -> .md (user requirement: only md/latex)
+    txt_files = sorted(project_path.glob("*.txt"))
+    for txt in txt_files:
+        try:
+            md_target = txt.with_suffix(".md")
+            if not md_target.exists():
+                txt.rename(md_target)
+            else:
+                # If md already exists, keep md and delete txt to avoid confusion
+                txt.unlink(missing_ok=True)
+        except Exception:
+            # Best effort; continue
+            pass
+    # Re-scan after migration
+    md_files = sorted(project_path.glob("*.md"))
+    if not md_files:
+        raise HTTPException(status_code=404, detail="No Markdown files found in project")
+    
+    # Check if tectonic is available
+    if not shutil.which("tectonic"):
+        raise HTTPException(
+            status_code=503,
+            detail="tectonic is not installed. Please install it: brew install tectonic"
+        )
+    
+    try:
+        # Read all markdown files
+        md_contents = []
+        md_titles = []
+        has_russian = False
+        
+        for md_file in md_files:
+            content = md_file.read_text(encoding="utf-8")
+            md_contents.append(content)
+            md_titles.append(md_file.stem.replace('_', ' ').title())
+            if not has_russian:
+                has_russian = _has_cyrillic(content)
+        
+        # Generate LaTeX document
+        LOGGER.info("Converting %d Markdown files to LaTeX for project %s", len(md_files), project_id)
+        latex_doc = create_latex_document(md_contents, md_titles, has_russian=has_russian)
+        
+        # Write LaTeX file
+        tex_path = project_path / "project.tex"
+        tex_path.write_text(latex_doc, encoding="utf-8")
+        LOGGER.info("LaTeX document written to %s", tex_path)
+        
+        # Compile with tectonic
+        pdf_path = project_path / "project.pdf"
+        LOGGER.info("Compiling LaTeX to PDF with tectonic...")
+        
+        tectonic_cmd = ["tectonic", "project.tex"]
+        result = await execute_safe(
+            tectonic_cmd,
+            timeout_seconds=90,
+            cwd=project_path
+        )
+        
+        exit_code = result.get("exit_code", -1)
+        stderr = str(result.get("stderr", ""))
+        stdout = str(result.get("stdout", ""))
+        
+        if exit_code == 0 and pdf_path.exists():
+            pdf_size = pdf_path.stat().st_size
+            LOGGER.info("PDF generated successfully: %s (%d bytes)", pdf_path, pdf_size)
+            return FileResponse(
+                pdf_path,
+                media_type="application/pdf",
+                filename=f"project_{project_id}.pdf",
+            )
+        
+        # Extract meaningful error from stderr
+        error_lines = stderr.split('\n') if stderr else []
+        error_summary = []
+        for line in error_lines[-10:]:
+            if 'error:' in line.lower() or 'fatal' in line.lower():
+                error_summary.append(line.strip())
+        
+        error_msg = f"tectonic compilation failed (exit_code={exit_code})"
+        if error_summary:
+            error_msg += f": {'; '.join(error_summary[:3])}"
+        elif stderr:
+            error_msg += f": {stderr[:300]}"
+        
+        LOGGER.error("PDF generation failed: %s", error_msg)
+        LOGGER.error("Full tectonic stderr: %s", stderr[:1000])
+        LOGGER.error("Full tectonic stdout: %s", stdout[:1000])
+        
+        # Provide helpful error message
+        if "font" in stderr.lower() or "fontspec" in stderr.lower():
+            error_msg += ". Tried XeLaTeX and pdfLaTeX - both failed. Check tectonic installation and fonts."
+        elif "package" in stderr.lower():
+            error_msg += ". Missing LaTeX package - check tectonic installation."
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF compilation failed: {error_msg}. LaTeX source saved at project.tex for debugging."
+        )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.exception("Unexpected error during PDF generation: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate PDF: {str(e)[:200]}"
+        )
+
+
 @router.post("/{project_id}/file")
 async def save_file(
     project_id: UUID,
@@ -335,30 +498,32 @@ async def save_file(
     project_path = _project_path(project_id)
     if not project_path.exists():
         raise HTTPException(status_code=404, detail="Project not found")
-    target = project_path / payload.path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(payload.content, encoding="utf-8")
+
+    # SAFE WRITE: prevent path traversal and writes outside project root
+    project_root = project_path.resolve()
+    saved = fileutils.write_files(project_root, [{"path": payload.path, "content": payload.content}])
+    if not saved:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    target = saved[0]
+    rel_path = target.relative_to(project_root).as_posix()
     size = target.stat().st_size
-    await db_utils.add_artifacts(session, project_id, [payload.path], [size])
+
+    await db_utils.add_artifacts(session, project_id, [rel_path], [size])
     await db_utils.record_event(
         session,
         project_id,
-        f"File {payload.path} saved",
+        f"File {rel_path} saved",
         agent="editor",
     )
-    await ws_manager.broadcast(
+    await emit_event(
         str(project_id),
-        {
-            "type": "event",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "project_id": str(project_id),
-            "agent": "editor",
-            "level": "info",
-            "msg": f"File {payload.path} saved",
-            "artifact_path": payload.path,
-        },
+        f"File {rel_path} saved",
+        agent="editor",
+        data={"artifact_path": rel_path, "size_bytes": size},
+        persist=False,  # already recorded via db_utils.record_event above
     )
-    return {"path": payload.path, "size_bytes": size}
+    return {"path": rel_path, "size_bytes": size}
 
 
 # ============ Memory / Knowledge API ============

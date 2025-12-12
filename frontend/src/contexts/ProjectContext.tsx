@@ -60,15 +60,23 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [projectId]);
 
+  const statusRef = useRef<string>("");
+  useEffect(() => { statusRef.current = status; }, [status]);
+
   const fetchStatus = useCallback(async () => {
     if (!projectId) return;
     const response = await fetch(`${API_BASE}/api/projects/${projectId}/status`);
     if (response.ok) {
       const data = await response.json();
+      const newStatus = data.status;
       setSteps(data.steps);
-      setStatus(data.status);
+      setStatus(newStatus);
+      // Refresh files when project completes
+      if (newStatus === "done" && statusRef.current !== "done") {
+        setTimeout(() => fetchFiles(), 300);
+      }
     }
-  }, [projectId]);
+  }, [projectId, fetchFiles]);
 
   const fetchFileContent = useCallback(
     async (path: string, versionOverride?: number) => {
@@ -90,6 +98,17 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     fetchStatus();
   }, [fetchFiles, fetchStatus]);
 
+  // Ensure files are loaded when status becomes "done"
+  useEffect(() => {
+    if (status === "done") {
+      // Small delay to ensure backend has finished writing files
+      const timer = setTimeout(() => {
+        fetchFiles();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [status, fetchFiles]);
+
   useEffect(() => {
     if (selectedFile) {
       fetchFileContent(selectedFile);
@@ -99,25 +118,62 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     if (!projectId) return;
     const ws = new WebSocket(`${WS_BASE}/ws/projects/${projectId}`);
+    
+    ws.onopen = () => {
+      console.log(`[WebSocket] Connected to project ${projectId}`);
+    };
+    
+    ws.onerror = (error) => {
+      console.error(`[WebSocket] Error for project ${projectId}:`, error);
+    };
+    
+    ws.onclose = () => {
+      console.log(`[WebSocket] Disconnected from project ${projectId}`);
+    };
+    
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === "event") {
-          setLogs((prev) => [...prev.slice(-199), data]);
+        console.log(`[WebSocket] Received:`, data);
+        
+        // Accept both "event" type (from ProjectEvent) and "info" type (from websocket.py)
+        if (data.type === "event" || data.type === "info") {
+          // Normalize to LogEvent format
+          const logEvent: LogEvent = {
+            type: data.type || "event",
+            timestamp: data.timestamp || new Date().toISOString(),
+            project_id: data.project_id || projectId || "",
+            agent: data.agent || "system",
+            level: data.level || "info",
+            msg: data.msg || data.message || JSON.stringify(data),
+            artifact_path: data.data?.artifact_path || data.artifact_path,
+          };
+          
+          setLogs((prev) => [...prev.slice(-199), logEvent]);
           fetchStatus();
-          if (data.artifact_path) {
+          
+          // Refresh files when artifact is created or project completes
+          if (logEvent.artifact_path) {
             fetchFiles();
             soundManager.playSuccess();
-            if (selectedFileRef.current && data.artifact_path === selectedFileRef.current) {
+            if (selectedFileRef.current && logEvent.artifact_path === selectedFileRef.current) {
                  fetchFileContent(selectedFileRef.current);
             }
+          } else if (logEvent.msg && (logEvent.msg.includes("completed successfully") || logEvent.msg.includes("Project completed"))) {
+            // Refresh files when project completes
+            setTimeout(() => fetchFiles(), 500);
           }
+        } else {
+          console.warn(`[WebSocket] Unknown event type: ${data.type}`, data);
         }
-      } catch {
-        // ignore malformed events
+      } catch (err) {
+        console.error(`[WebSocket] Failed to parse message:`, err, event.data);
       }
     };
-    return () => ws.close();
+    
+    return () => {
+      ws.close();
+    };
   }, [projectId, fetchStatus, fetchFiles, fetchFileContent]);
 
   const handleSave = async (content: string) => {

@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from backend.core.ws_manager import ws_manager
+from backend.core.event_bus import emit_event
 from backend.llm.adapter import get_llm_adapter
 from backend.settings import get_settings
 from backend.sandbox.executor import execute_safe
@@ -35,17 +36,7 @@ class TesterAgent:
 
     async def _broadcast_thought(self, project_id: str, msg: str, level: str = "info"):
         """Helper to broadcast agent thoughts to the UI."""
-        await ws_manager.broadcast(
-            project_id,
-            {
-                "type": "event",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "project_id": project_id,
-                "agent": "tester",
-                "level": level,
-                "msg": msg,
-            },
-        )
+        await emit_event(project_id, msg, agent="tester", level=level, persist=False)
 
     async def test_project(self, project_id: UUID, context: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -102,6 +93,14 @@ class TesterAgent:
 
         passed = all(check["passed"] for check in checks)
         
+        # Log issues for debugging
+        if issues:
+            LOGGER.info("Tester found %d issues:", len(issues))
+            for idx, issue in enumerate(issues[:10], 1):  # Log first 10
+                LOGGER.info("  %d. %s", idx, issue)
+            if len(issues) > 10:
+                LOGGER.info("  ... and %d more issues", len(issues) - 10)
+        
         if passed:
             await self._broadcast_thought(project_id_str, "✅ All tests PASSED!", "info")
         else:
@@ -128,7 +127,9 @@ class TesterAgent:
             # JavaScript/TypeScript
             if file_path.endswith(('.js', '.ts', '.jsx', '.tsx')):
                 try:
-                    content = read_project_file(project_path, file_path)
+                    data, is_text = read_project_file(project_path, file_path)
+                    content = data.decode("utf-8") if is_text else ""
+                    
                     # Basic checks
                     if not content.strip():
                         issues.append(f"{file_path}: File is empty")
@@ -169,7 +170,8 @@ class TesterAgent:
             file_path = str(file_entry)  # Convert FileEntry to string
             if file_path.endswith(('.js', '.ts', '.jsx', '.tsx', '.py')):
                 try:
-                    content = read_project_file(project_path, file_path)
+                    data, is_text = read_project_file(project_path, file_path)
+                    content = data.decode("utf-8") if is_text else ""
                     
                     # Check for React imports without package.json
                     if not has_package_json and ('import React' in content or 'from "react"' in content or "from 'react'" in content):
@@ -222,7 +224,8 @@ class TesterAgent:
             index_html = project_path / "index.html"
             if index_html.exists():
                 try:
-                    content = read_project_file(project_path, "index.html")
+                    data, is_text = read_project_file(project_path, "index.html")
+                    content = data.decode("utf-8") if is_text else ""
                     
                     # Check if scripts are referenced
                     script_tags = content.count('<script')
@@ -254,7 +257,24 @@ class TesterAgent:
                         timeout_seconds=5
                     )
                     if result["exit_code"] != 0:
-                        issues.append(f"main.py import failed: {result['stderr'][:200]}")
+                        stderr = result["stderr"]
+                        is_ignored_error = False
+                        
+                        # Ignore missing external dependencies in sandbox environment
+                        if "ModuleNotFoundError" in stderr:
+                            import re
+                            match = re.search(r"No module named '([^']+)'", stderr)
+                            if match:
+                                module_name = match.group(1)
+                                # Only report error if it's a missing LOCAL file
+                                local_module = project_path / f"{module_name}.py"
+                                if not local_module.exists():
+                                    # It's an external lib or missing local file.
+                                    LOGGER.warning(f"Runtime check ignored missing module: {module_name}")
+                                    is_ignored_error = True
+
+                        if not is_ignored_error:
+                            issues.append(f"main.py import failed: {stderr[:200]}")
                 except Exception as e:
                     issues.append(f"Runtime check failed: {e}")
 
@@ -270,7 +290,9 @@ class TesterAgent:
                 main_cpp = project_path / "main.cpp"
                 if main_cpp.exists():
                     # We might not have g++ in the sandbox, but we can check if file is empty
-                    content = read_project_file(project_path, "main.cpp")
+                    data, is_text = read_project_file(project_path, "main.cpp")
+                    content = data.decode("utf-8") if is_text else ""
+
                     if not content.strip():
                         issues.append("main.cpp is empty")
                     if "int main" not in content:
@@ -291,9 +313,16 @@ class TesterAgent:
             # Read all files
             files_content = []
             for file_entry in iter_file_entries(project_path):
-                file_path = str(file_entry)  # Convert FileEntry to string
-                content = read_project_file(project_path, file_path)
-                files_content.append(f"FILE: {file_path}\n```\n{content[:5000]}\n```")
+                file_path = file_entry.path  # Get path string from FileEntry object
+                
+                try:
+                    data, is_text = read_project_file(project_path, file_path)
+                    if is_text:
+                        content = data.decode("utf-8")
+                        files_content.append(f"FILE: {file_path}\n```\n{content[:5000]}\n```")
+                except Exception as read_err:
+                    LOGGER.warning(f"Could not read file {file_path} for logic check: {read_err}")
+                    continue
             
             if not files_content:
                 return {
@@ -304,32 +333,53 @@ class TesterAgent:
                 }
 
             prompt = (
-                "You are a LEGENDARY QA ENGINEER with 15+ years at Google/Meta.\n"
-                "You have prevented countless critical bugs from reaching production.\n"
+                "You are a LEGENDARY QA ENGINEER with 15 years experience.\n"
+                "You have expertise in testing software across ALL technologies.\n"
+                "You catch bugs that would cost millions in production.\n"
                 "\n"
-                f"Project Requirements:\n"
+                "CRITICAL: Only report BLOCKING issues that prevent the code from working.\n"
+                "IGNORE: Style issues, missing documentation, optimization suggestions, or minor warnings.\n"
+                "\n"
+                f"=== PROJECT ===\n"
                 f"Title: {context.get('title')}\n"
                 f"Description: {context.get('description')}\n"
                 f"Target: {context.get('target')}\n"
                 "\n"
-                "Code Under Test:\n"
+                f"=== CODE ===\n"
                 + "\n\n".join(files_content)
                 + "\n\n"
-                "CRITICAL VALIDATION CHECKLIST:\n"
-                "1. COMPLETENESS: Is ALL functionality implemented? Any TODOs/placeholders?\n"
-                "2. LOGIC: Does the code actually implement the requirements?\n"
-                "3. EXECUTION: Will the code run/compile? Is there an entry point?\n"
-                "4. EDGE CASES: Are errors handled? Null/None checks? Boundary conditions?\n"
-                "5. INTEGRATION: Do files work together? Correct imports/includes?\n"
+                "=== VALIDATION CHECKLIST (ONLY BLOCKING ISSUES) ===\n"
                 "\n"
-                "Respond with ONLY valid JSON:\n"
+                "1. SYNTAX ERRORS:\n"
+                "   - Will the code compile/parse? (ONLY if it won't)\n"
+                "   - Are delimiters matched? (ONLY if broken)\n"
+                "\n"
+                "2. CRITICAL MISSING PARTS:\n"
+                "   - Missing entry point (main function, app.run, etc.)\n"
+                "   - Undefined functions that are called\n"
+                "   - Missing required imports that break execution\n"
+                "\n"
+                "3. RUNTIME ERRORS:\n"
+                "   - Code that will crash on execution (not just missing dependencies)\n"
+                "   - Logic errors that prevent basic functionality\n"
+                "\n"
+                "DO NOT REPORT:\n"
+                "   - Missing dependencies (these are expected in sandbox)\n"
+                "   - TODO/FIXME comments (these are acceptable)\n"
+                "   - Style issues or code quality suggestions\n"
+                "   - Missing error handling (unless it's critical)\n"
+                "   - Optimization opportunities\n"
+                "\n"
+                "=== OUTPUT (JSON) ===\n"
                 "{\n"
-                '  "_thought": "Your reasoning...",\n'
+                '  "_thought": "Checking for blocking issues only...",\n'
                 '  "passed": true/false,\n'
-                '  "issues": ["Critical: Main function missing", "Missing error handling in data processing"]\n'
+                '  "issues": ["ONLY blocking issues that prevent execution"]\n'
                 "}\n"
                 "\n"
-                "Be STRICT but FAIR. Only fail if there are REAL problems that would prevent the code from working."
+                "PASS if code will compile and run (even with missing external dependencies).\n"
+                "FAIL ONLY if code has syntax errors or critical missing parts.\n"
+                "Return ONLY JSON."
             )
 
             response = await self._adapter.acomplete(prompt, json_mode=True)

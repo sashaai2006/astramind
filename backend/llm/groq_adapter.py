@@ -25,7 +25,9 @@ class GroqLLMAdapter(BaseLLMAdapter):
     """Adapter for Groq API (fast inference) with caching."""
 
     def __init__(self, model: str = "llama-3.1-8b-instant"):
-        api_key = os.getenv("GROQ_API_KEY")
+        from backend.settings import get_settings
+        settings = get_settings()
+        api_key = settings.groq_api_key or os.getenv("GROQ_API_KEY")
         if not api_key:
             LOGGER.warning("GROQ_API_KEY not found. Groq adapter will fail.")
         self.client = AsyncGroq(api_key=api_key)
@@ -33,8 +35,9 @@ class GroqLLMAdapter(BaseLLMAdapter):
 
     @retry(
         retry=retry_if_exception_type((RateLimitError, InternalServerError, APIConnectionError)),
-        wait=wait_exponential(multiplier=1, min=2, max=20),
-        stop=stop_after_attempt(5),
+        # Rate limits often require longer cool-downs than 20s.
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+        stop=stop_after_attempt(8),
         before_sleep=before_sleep_log(LOGGER, logging.INFO),
     )
     async def acomplete(self, prompt: str, json_mode: bool = False, cache_key: Optional[str] = None) -> str:

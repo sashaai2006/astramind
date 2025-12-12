@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from backend.core.ws_manager import ws_manager
+from backend.core.event_bus import emit_event
 from backend.llm.adapter import get_llm_adapter
 from backend.memory import utils as db_utils
 from backend.memory.db import get_session
@@ -32,17 +32,7 @@ class RefactorAgent:
         # Don't await - fire and forget to avoid blocking
         import asyncio
         asyncio.create_task(
-            ws_manager.broadcast(
-                project_id,
-                {
-                    "type": "event",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "project_id": project_id,
-                    "agent": "refactor",
-                    "level": level,
-                    "msg": msg,
-                },
-            )
+            emit_event(project_id, msg, agent="refactor", level=level, persist=False)
         )
 
     async def chat(self, project_id: UUID, message: str, history: Optional[List[Dict[str, str]]] = None) -> str:
@@ -77,6 +67,23 @@ class RefactorAgent:
         max_retries = 2
         updates = None
         last_error = None
+        rate_limit_backoffs = [10, 20, 40]
+        rate_limit_attempt = 0
+
+        def _is_rate_limit_error(exc: Exception) -> bool:
+            try:
+                from tenacity import RetryError  # type: ignore[import-not-found]
+                if isinstance(exc, RetryError):
+                    last = exc.last_attempt.exception()
+                    if last and last.__class__.__name__ == "RateLimitError":
+                        return True
+            except Exception:
+                pass
+            name = exc.__class__.__name__
+            if name == "RateLimitError":
+                return True
+            txt = (str(exc) or "").lower()
+            return ("rate limit" in txt) or ("ratelimit" in txt) or ("RateLimitError" in repr(exc))
         
         for attempt in range(max_retries):
             try:
@@ -96,6 +103,15 @@ class RefactorAgent:
             except Exception as exc:
                 last_error = exc
                 LOGGER.warning("RefactorAgent attempt %d failed: %s", attempt + 1, exc)
+
+                # Provider rate-limit: cooldown and retry without rewriting the prompt
+                if _is_rate_limit_error(exc) and rate_limit_attempt < len(rate_limit_backoffs):
+                    wait_s = rate_limit_backoffs[rate_limit_attempt]
+                    rate_limit_attempt += 1
+                    await self._broadcast_thought(str(project_id), f"Rate limit hit. Cooling down for {wait_s}s…", "warning")
+                    import asyncio
+                    await asyncio.sleep(wait_s)
+                    continue
                 
                 if attempt < max_retries - 1:
                     # Retry with a stricter prompt
@@ -179,17 +195,12 @@ class RefactorAgent:
 
                 # Notify frontend
                 for rel_path in relative_paths:
-                    await ws_manager.broadcast(
+                    await emit_event(
                         str(project_id),
-                        {
-                            "type": "event",
-                            "timestamp": "",
-                            "project_id": str(project_id),
-                            "agent": "refactor",
-                            "level": "info",
-                            "msg": f"Updated {rel_path}",
-                            "artifact_path": rel_path,
-                        },
+                        f"Updated {rel_path}",
+                        agent="refactor",
+                        data={"artifact_path": rel_path},
+                        persist=False,
                     )
                 
                 if "modified" not in response_message.lower() and "created" not in response_message.lower():
@@ -368,62 +379,46 @@ class RefactorAgent:
         guidance = intent_guidance.get(intent, "Understand the request and make appropriate changes suitable for the existing tech stack.")
 
         return (
-            "You are a WORLD-CLASS SOFTWARE ENGINEER and AI CODING ASSISTANT.\n"
-            "You have:\n"
-            "- 15+ years of experience across all tech stacks (C++, Python, JS, Rust, Go, Java, etc.)\n"
-            "- Contributed to Linux kernel, React, Python core libraries\n"
-            "- Solved impossible bugs that others gave up on\n"
-            "- Reputation for writing clean, elegant, maintainable code\n"
+            "You are a LEGENDARY SOFTWARE ENGINEER with 20 years experience.\n"
+            "You have mastered Computer Science and can work with ANY technology.\n"
+            "You write PRODUCTION-READY code that COMPILES and RUNS.\n"
             "\n"
-            "You understand natural human language perfectly (English and Russian).\n"
-            f"**User's Intent:** {intent}\n"
-            f"**Your Mission:** {guidance}\n"
+            f"=== USER REQUEST ===\n"
+            f"Intent: {intent}\n"
+            f"Mission: {guidance}\n"
+            f'Message: "{user_message}"\n'
             "\n"
             f"{memory_section}"
-            "**Available Project Files:**\n"
-            f"{context_files}\n"
-            "\n"
+            f"=== PROJECT FILES ===\n{context_files}\n\n"
             f"{history_text}"
-            "**User Said:**\n"
-            f'"{user_message}"\n'
+            "=== CODE QUALITY STANDARDS ===\n"
+            "1. COMPLETE: Every function fully implemented, no stubs\n"
+            "2. CORRECT: Code must compile/parse and run\n"
+            "3. CLEAN: Readable, well-structured, good names\n"
+            "4. IDIOMATIC: Follow conventions of the target language\n"
             "\n"
-            "**Your Task:**\n"
-            "1. Interpret the request naturally.\n"
-            "2. Detect the existing project language/stack from the files provided.\n"
-            "3. If unclear, make intelligent assumptions based on context (e.g., if files are .py, write Python).\n"
-            "4. Be conversational in 'message' (e.g., 'I've refactored the class to be thread-safe!').\n"
-            "5. If appropriate, suggest next steps in 'message'.\n"
+            "=== BEFORE SUBMITTING ===\n"
+            "✓ All dependencies declared?\n"
+            "✓ Entry point exists?\n"
+            "✓ Syntax is valid?\n"
+            "✓ Would it run if executed?\n"
             "\n"
-            "**Examples of Good Responses:**\n"
-            "User: 'перепиши на C#'\n"
-            "You: {\"_thought\": \"User wants C# conversion...\", \"message\": \"I've converted your code to C#! Created a .NET project...\", \"files\": [...]}\n"
-            "\n"
-            "User: 'fix this'\n"
-            "You: {\"_thought\": \"Found a missing semicolon...\", \"message\": \"Fixed 2 bugs: added missing semicolon...\", \"files\": [...]}\n"
-            "\n"
-            "User: 'optimize'\n"
-            "You: {\"_thought\": \"Loop is O(n^2)...\", \"message\": \"Optimized the loop to O(n) using a hash map.\", \"files\": [...]}\n"
-            "\n"
-            "\n"
-            "**IMPORTANT: Response Format (JSON ONLY)**\n"
-            "You MUST respond with ONLY this JSON structure. No text before or after:\n"
+            "=== OUTPUT (JSON) ===\n"
             "{\n"
-            '  "_thought": "I understand the user wants to [intent]. I will [action] by [method].",\n'
-            '  "message": "Friendly response to user (e.g., \'I converted your Snake game to C# and created a .NET 6.0 project!\')",\n'
+            '  "_thought": "Analysis: User wants X. I will do Y.",\n'
+            '  "message": "Friendly response to user",\n'
             '  "files": [\n'
-            '    {"path": "NewFile.cs", "content": "full file content with \\\\n escaping"},\n'
-            '    {"path": "Project.csproj", "content": "..."}\n'
+            '    {"path": "file.ext", "content": "COMPLETE CODE with \\\\n for newlines"}\n'
             '  ]\n'
             "}\n"
             "\n"
-            "**Key Rules:**\n"
-            "1. If user wants to CONVERT to another language: create new files with correct extensions (.cs for C#, .py for Python, etc.)\n"
-            "2. If user wants to DELETE old files: mention it in 'message', but you can't delete (only create/modify)\n"
-            "3. Always return COMPLETE file content (not snippets)\n"
-            "4. Escape all newlines as \\\\n\n"
-            "5. Be conversational in 'message' field but technical in 'content'\n"
+            "=== RULES ===\n"
+            "• content = COMPLETE file (not snippet)\n"
+            "• Newlines → \\n, Quotes → \\\"\n"
+            "• No markdown inside JSON\n"
+            "• If just explaining, files = []\n"
             "\n"
-            "START YOUR RESPONSE WITH { AND END WITH } - NO OTHER TEXT!\n"
+            "START WITH { END WITH } - NO OTHER TEXT!"
         )
 
     def _normalize_files(self, files: Optional[List[Dict[str, Any]]]) -> List[Dict[str, str]]:

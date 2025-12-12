@@ -28,9 +28,11 @@ class CerebrasAdapter(BaseLLMAdapter):
     World's fastest AI inference (2000+ tokens/sec)
     Perfect for rapid prototyping and iteration
     
-    Models:
-    - llama3.1-8b
-    - llama3.1-70b (recommended for quality)
+    Available Models (as of Dec 2024):
+    - llama-3.3-70b (recommended - best quality)
+    - llama3.1-8b (fast, lower quality)
+    - qwen-3-32b
+    - gpt-oss-120b
     
     Setup:
     1. Get API key: https://cloud.cerebras.ai/
@@ -39,7 +41,7 @@ class CerebrasAdapter(BaseLLMAdapter):
     Free tier: Generous limits for development
     """
 
-    def __init__(self, model: str = "llama3.1-70b"):
+    def __init__(self, model: str = "llama-3.3-70b"):
         api_key = os.getenv("CEREBRAS_API_KEY")
         if not api_key:
             LOGGER.warning("CEREBRAS_API_KEY not found. Cerebras adapter will fail.")

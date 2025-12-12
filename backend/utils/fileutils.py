@@ -23,11 +23,16 @@ async def ensure_project_dir_async(projects_root: Path, project_id: str, meta: D
 
 def iter_file_entries(project_path: Path) -> List[FileEntry]:
     entries: List[FileEntry] = []
+    ignore_dirs = {".git", ".venv", "__pycache__", ".DS_Store", "node_modules", ".cursor"}
+    ignore_files = {".DS_Store", "project.zip", "data.db", "data.db-shm", "data.db-wal"}
+    
     for root, dirs, files in os.walk(project_path):
+        # Filter directories in-place to prevent recursion
+        dirs[:] = [d for d in dirs if d not in ignore_dirs]
+        
         rel_root = Path(root).relative_to(project_path)
         for directory in dirs:
             dir_path = (rel_root / directory).as_posix()
-            # full = Path(root) / directory
             entries.append(
                 FileEntry(
                     path=dir_path if dir_path != "." else directory,
@@ -36,6 +41,9 @@ def iter_file_entries(project_path: Path) -> List[FileEntry]:
                 )
             )
         for file in files:
+            if file in ignore_files or file.endswith((".pyc", ".pyo")):
+                continue
+                
             full = Path(root) / file
             rel = (rel_root / file).as_posix()
             entries.append(

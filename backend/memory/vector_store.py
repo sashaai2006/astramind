@@ -488,10 +488,14 @@ class SemanticCache:
         self._collection = _get_fallback_collection("semantic_cache")
         return self._collection
     
-    def get(self, prompt: str) -> Optional[str]:
+    def get(self, prompt: str, filter_metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
         """
         Поиск похожего запроса в кэше.
         
+        Args:
+            prompt: Текст запроса
+            filter_metadata: Фильтр по метаданным (например, {"tech_stack": "cpp"})
+            
         Returns:
             Закэшированный ответ или None
         """
@@ -503,6 +507,7 @@ class SemanticCache:
             results = collection.query(
                 query_texts=[prompt],
                 n_results=1,
+                where=filter_metadata,
                 include=["documents", "metadatas", "distances"]
             )
             
@@ -527,7 +532,7 @@ class SemanticCache:
             LOGGER.error("Ошибка поиска в кэше: %s", e)
             return None
     
-    def set(self, prompt: str, response: str) -> bool:
+    def set(self, prompt: str, response: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
         """
         Сохранить запрос и ответ в кэш.
         """
@@ -539,12 +544,17 @@ class SemanticCache:
             # ID на основе хэша промпта
             doc_id = hashlib.sha256(prompt.encode()).hexdigest()[:16]
             
+            # Формируем метаданные: ответ + доп. поля (stack, etc.)
+            meta = {"response": response[:50000]}  # Ограничиваем ответ
+            if metadata:
+                meta.update(metadata)
+
             # Сохраняем промпт как документ, ответ в метаданных
             # (ChromaDB ищет по документам, не по метаданным)
             collection.upsert(
                 documents=[prompt[:10000]],  # Ограничиваем размер
                 ids=[doc_id],
-                metadatas=[{"response": response[:50000]}]  # Ограничиваем ответ
+                metadatas=[meta]
             )
             
             LOGGER.debug("Semantic Cache SET: %s...", prompt[:50])

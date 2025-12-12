@@ -29,7 +29,7 @@ class MockLLMAdapter(BaseLLMAdapter):
             {
                 "files": [
                     {
-                        "path": "notes.txt",
+                        "path": "notes.md",
                         "content": "Mock adapter fallback file.",
                     }
                 ]

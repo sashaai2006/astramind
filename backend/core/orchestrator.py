@@ -1,374 +1,255 @@
 from __future__ import annotations
 
 import asyncio
-import json
-from collections import OrderedDict
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
-from uuid import UUID, uuid4
+from typing import Any, Dict, Optional
+from uuid import UUID
 
-from backend.agents.ceo import CEOAgent
-from backend.agents.developer import DeveloperAgent
-from backend.agents.tester import TesterAgent
+from backend.core.state import ProjectState
+from backend.core.graph import create_project_graph
+from backend.core.checkpointer import get_checkpointer, close_checkpointer
 from backend.memory.db import get_session
 from backend.memory import utils as db_utils
-from backend.settings import get_settings
+from backend.core.presets import get_preset_by_id
+from backend.memory.models import CustomAgent, Team, TeamAgentLink, TeamMember
 from backend.utils.logging import get_logger
-from backend.utils.formatter import CodeFormatter
-
-from .ws_manager import ws_manager
 
 LOGGER = get_logger(__name__)
 
 
 class Orchestrator:
-    """Simple async DAG runner supporting parallel groups."""
+    """Orchestrator using LangGraph for stateful workflow execution."""
 
     def __init__(self) -> None:
-        settings = get_settings()
-        self._semaphore = asyncio.Semaphore(settings.llm_semaphore)
-        self._ceo = CEOAgent()
-        self._developer = DeveloperAgent(self._semaphore)
-        self._tester = TesterAgent()
-        self._stop_events: Dict[str, asyncio.Event] = {}
-        self._project_tasks: Dict[str, asyncio.Task] = {}
+        self._compiled_graph = None
+        self._init_lock = asyncio.Lock()
+        self._stop_events: dict[str, asyncio.Event] = {}
+        self._tasks: dict[str, asyncio.Task[None]] = {}
+        
+    async def _get_graph(self):
+        """Lazy initialization of the graph."""
+        async with self._init_lock:
+            if self._compiled_graph is None:
+                # Add timeout to prevent hanging on checkpointer/graph creation
+                try:
+                    checkpointer = await asyncio.wait_for(get_checkpointer(), timeout=10.0)
+                    self._compiled_graph = create_project_graph(checkpointer)
+                except asyncio.TimeoutError:
+                    LOGGER.error("Graph initialization timed out after 10s")
+                    raise RuntimeError("Graph initialization timeout")
+            return self._compiled_graph
+
+    def get_stop_event(self, project_id: str) -> asyncio.Event:
+        """Get (or create) the stop event for a project."""
+        ev = self._stop_events.get(project_id)
+        if ev is None:
+            ev = asyncio.Event()
+            self._stop_events[project_id] = ev
+        return ev
+
+    async def request_stop(self, project_id: str) -> None:
+        """
+        Request graceful stop of a running project.
+        - Sets a stop flag checked by workflow nodes
+        - Cancels the background task for faster interruption
+        """
+        self.get_stop_event(project_id).set()
+        task = self._tasks.get(project_id)
+        if task and not task.done():
+            task.cancel()
 
     async def async_start(
         self, project_id: UUID, title: str, description: str, target: str
     ) -> None:
+        """Start a new project workflow."""
         project_str = str(project_id)
-        if project_str in self._project_tasks:
-            LOGGER.info("Project %s already running", project_id)
-            return
+        LOGGER.info("Starting project %s via LangGraph", project_str)
+        
+        # Emit initial event so frontend knows workflow started (non-blocking)
+        from backend.core.event_bus import emit_event
+        try:
+            await asyncio.wait_for(emit_event(project_str, f"Starting project: {title}", agent="system", level="info"), timeout=1.0)
+        except asyncio.TimeoutError:
+            LOGGER.warning("Initial emit_event timed out, continuing...")
 
-        stop_event = asyncio.Event()
-        self._stop_events[project_str] = stop_event
-        task = asyncio.create_task(
-            self._run_project(project_id, title, description, target, stop_event)
-        )
-        self._project_tasks[project_str] = task
-        task.add_done_callback(lambda _: self._cleanup(project_str))
+        # Initial state
+        # Try to fetch agent config from DB (best effort, with timeout to avoid blocking)
+        agent_preset: Optional[str] = None
+        custom_agent_id: Optional[str] = None
+        team_id: Optional[str] = None
+        persona_prompt: Optional[str] = None
+        
+        async def _load_agent_config():
+            async with get_session() as session:
+                from sqlalchemy import select  # type: ignore[import-not-found]
+                project = await db_utils.get_project(session, project_id)
+                if project is not None:
+                    agent_preset_val = getattr(project, "agent_preset", None)
+                    custom_agent_id_val = str(getattr(project, "custom_agent_id", None)) if getattr(project, "custom_agent_id", None) else None
+                    team_id_val = str(getattr(project, "team_id", None)) if getattr(project, "team_id", None) else None
+                    persona_prompt_val: Optional[str] = None
 
-    def _cleanup(self, project_id: str) -> None:
-        self._project_tasks.pop(project_id, None)
-        self._stop_events.pop(project_id, None)
+                    # Resolve persona prompt for custom agent/team (highest priority)
+                    if getattr(project, "custom_agent_id", None):
+                        res = await session.execute(
+                            select(CustomAgent).where(CustomAgent.id == project.custom_agent_id)
+                        )
+                        agent = res.scalar_one_or_none()
+                        if agent:
+                            tech = ", ".join(agent.tech_stack or [])
+                            persona_prompt_val = (
+                                f"=== CUSTOM AGENT: {agent.name} ===\n"
+                                f"{agent.prompt}\n"
+                                + (f"\nTech Stack: {tech}\n" if tech else "")
+                            )
+                    elif getattr(project, "team_id", None):
+                        res = await session.execute(select(Team).where(Team.id == project.team_id))
+                        team = res.scalar_one_or_none()
+                        if team:
+                            # New membership table (presets + custom)
+                            res_members = await session.execute(
+                                select(TeamMember).where(TeamMember.team_id == team.id)
+                            )
+                            members = list(res_members.scalars().all())
 
-    async def shutdown(self) -> None:
-        """Cancel all running project tasks."""
-        LOGGER.info("Shutting down orchestrator, cancelling %d tasks...", len(self._project_tasks))
-        for project_id, task in list(self._project_tasks.items()):
-            if not task.done():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    LOGGER.info("Project %s task cancelled", project_id)
-                except Exception as e:
-                    LOGGER.error("Error cancelling project %s: %s", project_id, e)
-        self._project_tasks.clear()
-        self._stop_events.clear()
+                            custom_ids = {m.custom_agent_id for m in members if m.custom_agent_id}
+                            preset_ids = {m.preset_id for m in members if m.preset_id}
 
-    async def request_stop(self, project_id: str) -> None:
-        event = self._stop_events.get(project_id)
-        if event:
-            event.set()
+                            # Backward-compat: old link table (custom only)
+                            res_links = await session.execute(
+                                select(TeamAgentLink.agent_id).where(TeamAgentLink.team_id == team.id)
+                            )
+                            for row in res_links.all():
+                                custom_ids.add(row[0])
 
-    async def _run_project(
-        self,
-        project_id: UUID,
-        title: str,
-        description: str,
-        target: str,
-        stop_event: asyncio.Event,
-    ) -> None:
-        context = {
-            "project_id": str(project_id),
+                            members_prompt = ""
+                            blocks = []
+
+                            # Preset members
+                            for pid in sorted(preset_ids):
+                                preset = get_preset_by_id(pid)
+                                if not preset:
+                                    continue
+                                tags = ", ".join(preset.tags or [])
+                                blocks.append(
+                                    f"--- PRESET: {preset.name} ({preset.id}) ---\n"
+                                    f"{preset.persona_prompt}\n"
+                                    + (f"\nTags: {tags}\n" if tags else "")
+                                )
+
+                            # Custom members
+                            if custom_ids:
+                                res_agents = await session.execute(
+                                    select(CustomAgent).where(CustomAgent.id.in_(sorted(custom_ids)))
+                                )
+                                custom_members = list(res_agents.scalars().all())
+                                for m in custom_members:
+                                    tech = ", ".join(m.tech_stack or [])
+                                    blocks.append(
+                                        f"--- {m.name} ---\n{m.prompt}\n" + (f"\nTech Stack: {tech}\n" if tech else "")
+                                    )
+                            members_prompt = "\n\n".join(blocks)
+                            persona_prompt_val = (
+                                f"=== TEAM: {team.name} ===\n"
+                                + (f"{team.description}\n\n" if team.description else "")
+                                + (members_prompt if members_prompt else "No members.\n")
+                            )
+                    return agent_preset_val, custom_agent_id_val, team_id_val, persona_prompt_val
+                return None, None, None, None
+        
+        # Load with timeout (3s max) - don't block startup
+        try:
+            agent_preset, custom_agent_id, team_id, persona_prompt = await asyncio.wait_for(_load_agent_config(), timeout=3.0)
+        except asyncio.TimeoutError:
+            LOGGER.warning("Agent config loading timed out, using defaults")
+        except Exception as e:
+            LOGGER.debug("Failed to load agent_preset for %s: %s", project_id, e)
+
+        initial_state: ProjectState = {
+            "project_id": project_str,
             "title": title,
             "description": description,
             "target": target,
+            "tech_stack": None,
+            "agent_preset": agent_preset,
+            "custom_agent_id": custom_agent_id,
+            "team_id": team_id,
+            "persona_prompt": persona_prompt,
+            "research_results": None,
+            "research_queries": [],
+            "plan": [],
+            "current_step_idx": 0,
+            "generated_files": [],
+            "test_results": None,
+            "retry_count": 0,
+            "status": "planning"
         }
-        await self._emit_event(
-            project_id, "Orchestration started", agent="system", level="info"
-        )
-        async with get_session() as session:
-            await db_utils.update_project_status(session, project_id, "running")
 
+        # Fire and forget execution
+        task = asyncio.create_task(self._run_workflow(project_str, initial_state))
+        self._tasks[project_str] = task
+        task.add_done_callback(lambda _: self._tasks.pop(project_str, None))
+
+    async def _run_workflow(self, project_id: str, state: ProjectState = None):
+        """Runs the LangGraph workflow."""
         try:
-            plan = await self._ceo.plan(description=description, target=target)
-            if not plan:
-                await self._emit_event(
-                    project_id, "No steps returned by CEO", agent="ceo", level="error"
-                )
-                await self._mark_failed(project_id, "Plan generation failed")
+            graph = await self._get_graph()
+            config = {"configurable": {"thread_id": project_id}}
+            
+            # Update DB status
+            async with get_session() as session:
+                await db_utils.update_project_status(session, UUID(project_id), "running")
+
+            # Invoke graph
+            # If state is None, it means we are resuming, passing None to input triggers load from checkpoint
+            await graph.ainvoke(state, config=config)
+        except asyncio.CancelledError:
+            LOGGER.info("Workflow cancelled for project %s", project_id)
+            async with get_session() as session:
+                await db_utils.update_project_status(session, UUID(project_id), "stopped")
+            raise
+        except Exception as e:
+            LOGGER.exception("Workflow failed for project %s: %s", project_id, e)
+            async with get_session() as session:
+                await db_utils.update_project_status(session, UUID(project_id), "failed")
+
+    async def resume_project(self, project_id: UUID) -> None:
+        """Resumes an interrupted project from checkpoint."""
+        project_str = str(project_id)
+        LOGGER.info("Resuming project %s", project_str)
+        
+        try:
+            graph = await self._get_graph()
+            config = {"configurable": {"thread_id": project_str}}
+            
+            # Check if we have a checkpoint
+            snapshot = await graph.aget_state(config)
+            if not snapshot.values:
+                LOGGER.warning("No checkpoint found for %s (likely from pre-migration). Marking as failed.", project_str)
+                # We could restart here, but without fetching project data from DB it's hard.
+                # For now, just fail gracefully to stop the crash loop.
+                async with get_session() as session:
+                    await db_utils.update_project_status(session, project_id, "failed")
                 return
 
-            for group_id, steps in self._group_steps(plan):
-                if stop_event.is_set():
-                    await self._emit_event(
-                        project_id,
-                        "Received stop command. Halting pipeline.",
-                        agent="system",
-                        level="info",
-                    )
-                    await self._mark_failed(project_id, "Stopped by user")
-                    return
-
-                await self._emit_event(
-                    project_id,
-                    f"Starting parallel group {group_id}",
-                    agent="system",
-                )
-
-                await asyncio.gather(
-                    *[
-                        self._run_step(step, context, stop_event)
-                        for step in steps
-                    ],
-                    return_exceptions=False,
-                )
-
-            # Format code
-            await self._emit_event(
-                project_id,
-                "Formatting code...",
-                agent="system",
-            )
-            settings = get_settings()
-            project_path = settings.projects_root / str(project_id)
-            format_results = await CodeFormatter.format_project(project_path)
-            await self._emit_event(
-                project_id,
-                f"Formatted {format_results['formatted']} files",
-                agent="formatter",
-                level="info"
-            )
-            
-            # Run tests after all steps complete
-            await self._emit_event(
-                project_id,
-                "Running final tests...",
-                agent="system",
-            )
-            test_results = await self._tester.test_project(project_id, context)
-            
-            # Self-Correction Loop
-            max_retries = 1
-            retries = 0
-            
-            while not test_results["passed"] and retries < max_retries:
-                retries += 1
-                await self._emit_event(
-                    project_id,
-                    f"Tests failed ({len(test_results['issues'])} issues). Attempting auto-correction ({retries}/{max_retries})...",
-                    agent="system",
-                    level="warning"
-                )
-                
-                await self._developer.auto_correct(context, test_results["issues"], stop_event)
-                
-                # Re-format after fixes
-                await CodeFormatter.format_project(settings.projects_root / str(project_id))
-                
-                # Re-test
-                test_results = await self._tester.test_project(project_id, context)
-            
-            if not test_results["passed"]:
-                await self._emit_event(
-                    project_id,
-                    f"Tests failed: {len(test_results['issues'])} issues found",
-                    agent="tester",
-                    level="warning"
-                )
-                # Log issues but don't fail the project
-                for issue in test_results["issues"][:5]:  # Show first 5
-                    await self._emit_event(project_id, f"Issue: {issue}", agent="tester", level="warning")
-
-            await self._mark_done(project_id)
-        except Exception as exc:  # noqa: BLE001
-            LOGGER.exception("Project %s failed: %s", project_id, exc)
-            await self._emit_event(
-                project_id, f"Pipeline failed: {exc}", agent="system", level="error"
-            )
-            await self._mark_failed(project_id, "internal_error")
-
-    async def broadcast_message(self, project_id: UUID, source: str, target: str, message: str) -> None:
-        """Broadcast an inter-agent communication event."""
-        await self._emit_event(
-            project_id,
-            f"Message from {source} to {target}: {message}",
-            agent=source,
-            level="info",
-            data={
-                "type": "communication",
-                "source": source,
-                "target": target,
-                "message": message
-            }
-        )
-
-    async def _run_step(
-        self, step: Dict[str, Any], context: Dict[str, Any], stop_event: asyncio.Event
-    ) -> None:
-        project_id = UUID(context["project_id"])
-        task_id = UUID(step.get("id") or str(uuid4()))
-        step_name = step.get("name", "unknown")
-        
-        # Callback for agents to send messages
-        async def on_message(target: str, msg: str) -> None:
-            await self.broadcast_message(project_id, step_name, target, msg)
-
-        # Optimized: Update task status and record event in ONE transaction
-        async with get_session() as session:
-            await db_utils.update_task_and_record_event(
-                session,
-                project_id=project_id,
-                task_id=task_id,
-                name=step_name,
-                agent=step.get("agent", "developer"),
-                status="running",
-                parallel_group=step.get("parallel_group"),
-                payload=step.get("payload", {}),
-                event_message=f"Step {step_name} started",
-            )
-        
-        # Must broadcast manually since we bypassed _emit_event
-        await ws_manager.broadcast(
-            str(project_id),
-            {
-                "type": "event",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "project_id": str(project_id),
-                "agent": step.get("agent", "developer"),
-                "level": "info",
-                "msg": f"Step {step_name} started",
-            },
-        )
-
-        status = "running"  # Default status in case of cancellation
-        try:
-            # Pass the callback to the agent
-            await self._developer.run(step, context, stop_event, on_message=on_message)
-            status = "done"
-            
-            # Optimized: Update task status and record event in ONE transaction
-            async with get_session() as session:
-                await db_utils.update_task_and_record_event(
-                    session,
-                    project_id=project_id,
-                    task_id=task_id,
-                    name=step.get("name", "unknown"),
-                    agent=step.get("agent", "developer"),
-                    status=status,
-                    parallel_group=step.get("parallel_group"),
-                    payload=step.get("payload", {}),
-                    event_message=f"Step {step.get('name')} finished",
-                )
-            
-            await ws_manager.broadcast(
-                str(project_id),
-                {
-                    "type": "event",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "project_id": str(project_id),
-                    "agent": step.get("agent", "developer"),
-                    "level": "info",
-                    "msg": f"Step {step.get('name')} finished",
-                },
-            )
-            
-        except asyncio.CancelledError:
-            status = "failed"
-            LOGGER.warning("Step %s was cancelled", step.get("name"))
-            raise
-        except Exception as exc:  # noqa: BLE001
-            status = "failed"
-            await self._emit_event(
-                project_id,
-                f"Step {step.get('name')} failed: {exc}",
-                agent=step.get("agent", "developer"),
-                level="error",
-            )
-            raise
-        finally:
-            # Cleanup if needed (status already updated if success)
-            if status == "failed":
-                try:
-                    async with get_session() as session:
-                        await db_utils.upsert_task(
-                            session,
-                            project_id=project_id,
-                            task_id=task_id,
-                            name=step.get("name", "unknown"),
-                            agent=step.get("agent", "developer"),
-                            status=status,
-                            parallel_group=step.get("parallel_group"),
-                            payload=step.get("payload", {}),
-                        )
-                except Exception:
-                    pass
-
-    async def _mark_done(self, project_id: UUID) -> None:
-        async with get_session() as session:
-            await db_utils.update_project_status(session, project_id, "done")
-        await self._emit_event(project_id, "Project completed", agent="system")
-
-    async def _mark_failed(self, project_id: UUID, reason: str) -> None:
-        async with get_session() as session:
-            await db_utils.update_project_status(session, project_id, "failed")
-        await self._emit_event(
-            project_id, f"Project failed: {reason}", agent="system", level="error"
-        )
-
-    async def _emit_event(
-        self,
-        project_id: UUID,
-        message: str,
-        *,
-        agent: str,
-        level: str = "info",
-        artifact_path: Optional[str] = None,
-        data: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """Emit event to WS and record in DB asynchronously (fire-and-forget for DB)."""
-        timestamp = datetime.now(timezone.utc).isoformat()
-        
-        # 1. Send to WS immediately
-        await ws_manager.broadcast(
-            str(project_id),
-            {
-                "type": "event",
-                "timestamp": timestamp,
-                "project_id": str(project_id),
-                "agent": agent,
-                "level": level,
-                "msg": message,
-                "artifact_path": artifact_path,
-                "data": data or {},
-            },
-        )
-        
-        # 2. Record in DB in background (don't await)
-        asyncio.create_task(self._record_event_bg(
-            project_id, message, agent, level, data
-        ))
-
-    async def _record_event_bg(self, project_id: UUID, message: str, agent: str, level: str, data: Optional[Dict[str, Any]]) -> None:
-        """Background task to record event in DB."""
-        try:
-            async with get_session() as session:
-                await db_utils.record_event(
-                    session,
-                    project_id,
-                    message,
-                    agent=agent,
-                    level=level,
-                    data=data or {},
-                )
+            # Passing None as input to ainvoke with a thread_id will resume from last checkpoint
+            task = asyncio.create_task(self._run_workflow(project_str, state=None))
+            self._tasks[project_str] = task
+            task.add_done_callback(lambda _: self._tasks.pop(project_str, None))
         except Exception as e:
-            LOGGER.error("Failed to record event in bg: %s", e)
+            LOGGER.error("Failed to resume project %s: %s", project_id, e)
+            async with get_session() as session:
+                await db_utils.update_project_status(session, project_id, "failed")
 
-    def _group_steps(self, steps: List[Dict[str, Any]]) -> List[Tuple[str, List[Dict[str, Any]]]]:
-        groups: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
+    async def shutdown(self) -> None:
+        """Cleanup resources."""
+        await close_checkpointer()
+
+    # Legacy method helper for group_steps used by generate_node
+    # Can be moved to utils later
+    def _group_steps(self, steps):
+        from collections import OrderedDict
+        from uuid import uuid4
+        groups = OrderedDict()
         for step in steps:
             group_key = step.get("parallel_group") or step.get("id") or str(uuid4())
             groups.setdefault(group_key, []).append(step)

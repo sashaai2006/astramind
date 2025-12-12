@@ -7,8 +7,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
-from backend.api import projects, websocket
+from backend.api import (
+    projects,
+    websocket,
+    documents,
+    documents_websocket,
+    presets,
+    custom_agents,
+    teams,
+)
 from backend.core.orchestrator import orchestrator
+from backend.core.document_orchestrator import document_orchestrator
 from backend.memory.db import init_db, async_session_factory
 from backend.memory.models import Task
 from backend.settings import get_settings
@@ -26,8 +35,10 @@ async def lifespan(app: FastAPI):
     
     # Optimization: Cleanup "zombie" tasks that were left running when server died
     try:
+        from backend.memory.models import Project, DocumentProject
+        
         async with async_session_factory() as session:
-            # Using execute since it's standard SQLAlchemy AsyncSession
+            # 1. Reset Tasks
             statement = select(Task).where(Task.status == "running")
             result = await session.execute(statement)
             zombies = result.scalars().all()
@@ -36,15 +47,35 @@ async def lifespan(app: FastAPI):
                 LOGGER.warning("Found %d zombie tasks. Resetting to 'failed'.", len(zombies))
                 for task in zombies:
                     task.status = "failed"
-                    task.result = "Server restarted during execution"
                     session.add(task)
                 await session.commit()
+            
+            # 2. Resume Projects (LangGraph Persistence)
+            statement_proj = select(Project).where(Project.status == "running")
+            result_proj = await session.execute(statement_proj)
+            running_projects = result_proj.scalars().all()
+            
+            if running_projects:
+                LOGGER.info("Found %d interrupted projects. Attempting to resume...", len(running_projects))
+                for proj in running_projects:
+                    # Async fire and forget resume
+                    await orchestrator.resume_project(proj.id)
+
+            # 3. Resume Documents
+            statement_docs = select(DocumentProject).where(DocumentProject.status == "running")
+            result_docs = await session.execute(statement_docs)
+            running_docs = result_docs.scalars().all()
+            if running_docs:
+                LOGGER.info("Found %d interrupted documents. Attempting to resume...", len(running_docs))
+                for doc in running_docs:
+                    await document_orchestrator.resume_document(doc.id)
     except Exception as e:
-        LOGGER.error("Failed to cleanup zombie tasks: %s", e)
+        LOGGER.error("Failed to recover state: %s", e)
 
     yield
     # Shutdown logic here if needed
     await orchestrator.shutdown()
+    await document_orchestrator.shutdown()
 
 
 app = FastAPI(
@@ -83,8 +114,13 @@ async def global_exception_handler(request: Request, exc: Exception):
     LOGGER.error("Global exception: %s", exc, exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal Server Error", "error": str(exc)},
+        content={"detail": "Internal Server Error"},
     )
 
 app.include_router(projects.router)
 app.include_router(websocket.router)
+app.include_router(documents.router)
+app.include_router(documents_websocket.router)
+app.include_router(presets.router)
+app.include_router(custom_agents.router)
+app.include_router(teams.router)

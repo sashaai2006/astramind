@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
+from sqlalchemy import text
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
@@ -47,6 +48,27 @@ async def init_db() -> None:
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        # Lightweight schema migration for existing sqlite DBs (best effort)
+        try:
+            await conn.execute(text("ALTER TABLE projects ADD COLUMN agent_preset VARCHAR"))
+        except Exception:
+            pass
+        try:
+            await conn.execute(text("ALTER TABLE projects ADD COLUMN custom_agent_id VARCHAR"))
+        except Exception:
+            pass
+        try:
+            await conn.execute(text("ALTER TABLE projects ADD COLUMN team_id VARCHAR"))
+        except Exception:
+            pass
+        try:
+            await conn.execute(text("ALTER TABLE document_projects ADD COLUMN custom_agent_id VARCHAR"))
+        except Exception:
+            pass
+        try:
+            await conn.execute(text("ALTER TABLE document_projects ADD COLUMN team_id VARCHAR"))
+        except Exception:
+            pass
     LOGGER.info("Database initialised at %s (WAL mode enabled)", DATABASE_PATH)
 
 
