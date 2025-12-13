@@ -19,10 +19,6 @@ services:
       - key: PYTHONPATH
         value: /app
     healthCheckPath: /api/health
-    disk:
-      name: astramind-data
-      mountPath: /app/data
-      sizeGB: 1
 
   - type: web
     name: astramind-frontend
@@ -35,7 +31,5 @@ services:
         sync: false
         # Укажите URL вашего backend после деплоя
         # Например: https://astramind-backend.onrender.com
-    buildCommand: ""
-    startCommand: npm start
     healthCheckPath: /
 
