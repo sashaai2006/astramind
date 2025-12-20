@@ -1,1 +1,0 @@
-{"import React from 'react';\nimport { useGameState } from '../hooks/useGameState';\n\nconst Score = () => {\n  const { score, updateScore } = useGameState();\n\n  return (\n    <div>\n      Score: {score}\n    </div>\n  );\n};\n\nexport default Score;"

@@ -1,1 +1,0 @@
-import React from 'react'; import ReactDOM from 'react-dom'; import App from './App'; let lastTime = 0; function render(time) { if (time - lastTime > 1000 / 60) { lastTime = time; ReactDOM.render(<App />, document.getElementById('root')); } requestAnimationFrame(render); } render();

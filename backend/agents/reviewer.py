@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, Dict, List, Optional
 
@@ -12,9 +13,16 @@ LOGGER = get_logger(__name__)
 
 class ReviewerAgent:
 
-    def __init__(self) -> None:
-        self._adapter = get_llm_adapter()
+    def __init__(self, semaphore: Optional[asyncio.Semaphore] = None) -> None:
+        self._adapter = None
         self._settings = get_settings()
+        self._semaphore = semaphore or asyncio.Semaphore(1)
+
+    @property
+    def adapter(self):
+        if self._adapter is None:
+            self._adapter = get_llm_adapter()
+        return self._adapter
 
     async def review(
         self, 
@@ -24,7 +32,8 @@ class ReviewerAgent:
         prompt = self._build_review_prompt(task_description, files)
         
         LOGGER.info("ReviewerAgent starting code review...")
-        response = await self._adapter.acomplete(prompt, json_mode=True)
+        async with self._semaphore:
+            response = await self.adapter.acomplete(prompt, json_mode=True)
         
         try:
             result = clean_and_parse_json(response)

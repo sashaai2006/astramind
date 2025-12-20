@@ -1,1 +1,0 @@
-{"from": "pydantic import BaseModel\n\n# User schema\nclass UserBase(BaseModel):\n    username: str\n    password: str\n\n# User schema with password\nclass User(UserBase):\n    password: str\n\n# Item schema\nclass ItemBase(BaseModel):\n    title: str\n    description: str\n\n# Item schema with owner\nclass Item(ItemBase):\n    owner_id: int\n    owner: User

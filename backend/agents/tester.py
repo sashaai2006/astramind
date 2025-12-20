@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from backend.core.ws_manager import ws_manager
 from backend.core.event_bus import emit_event
 from backend.llm.adapter import get_llm_adapter
 from backend.settings import get_settings
@@ -20,9 +19,16 @@ LOGGER = get_logger(__name__)
 
 class TesterAgent:
 
-    def __init__(self) -> None:
-        self._adapter = get_llm_adapter()
+    def __init__(self, semaphore: Optional[asyncio.Semaphore] = None) -> None:
+        self._adapter = None
         self._settings = get_settings()
+        self._semaphore = semaphore or asyncio.Semaphore(1)
+    
+    @property
+    def adapter(self):
+        if self._adapter is None:
+            self._adapter = get_llm_adapter()
+        return self._adapter
 
     async def _broadcast_thought(self, project_id: str, msg: str, level: str = "info"):
         await emit_event(project_id, msg, agent="tester", level=level, persist=False)
@@ -95,7 +101,9 @@ class TesterAgent:
         issues = []
         
         for file_entry in iter_file_entries(project_path):
-            file_path = str(file_entry)  # Convert FileEntry to string
+            if file_entry.is_dir:
+                continue
+            file_path = file_entry.path  # Use the path attribute
             full_path = project_path / file_path
             
             # JavaScript/TypeScript
@@ -140,7 +148,9 @@ class TesterAgent:
         has_package_json = (project_path / "package.json").exists()
         
         for file_entry in iter_file_entries(project_path):
-            file_path = str(file_entry)  # Convert FileEntry to string
+            if file_entry.is_dir:
+                continue
+            file_path = file_entry.path  # Use the path attribute
             if file_path.endswith(('.js', '.ts', '.jsx', '.tsx', '.py')):
                 try:
                     data, is_text = read_project_file(project_path, file_path)
@@ -284,6 +294,8 @@ class TesterAgent:
             # Read all files
             files_content = []
             for file_entry in iter_file_entries(project_path):
+                if file_entry.is_dir:
+                    continue
                 file_path = file_entry.path  # Get path string from FileEntry object
                 
                 try:
@@ -353,7 +365,8 @@ class TesterAgent:
                 "Return ONLY JSON."
             )
 
-            response = await self._adapter.acomplete(prompt, json_mode=True)
+            async with self._semaphore:
+                response = await self.adapter.acomplete(prompt, json_mode=True)
             result = clean_and_parse_json(response)
             
             return {

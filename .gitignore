@@ -69,3 +69,6 @@ documents/
 *SECRET*.txt
 *KEY*.txt
 
+# Nested package locks (keep single lock at repo root)
+frontend/src/package-lock.json
+

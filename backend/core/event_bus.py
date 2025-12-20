@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from backend.core.ws_manager import ws_manager
+from backend.core.ws_manager import get_ws_manager
 from backend.memory.db import get_session
 from backend.memory import utils as db_utils
 from backend.utils.logging import get_logger
@@ -44,24 +44,9 @@ async def emit_event(
     # WS (best effort)
     try:
         payload_dict = payload.model_dump()
-        # #region agent log
-        with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-            import json as json_lib, time
-            f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"event_bus.py:56","message":"emit_event before broadcast","data":{"project_id":project_id,"msg":msg[:100],"agent":agent},"timestamp":int(time.time()*1000)}) + '\n')
-        # #endregion
         LOGGER.debug("Broadcasting WS event for project %s: %s", project_id, payload_dict.get("msg", "")[:100])
-        await ws_manager.broadcast(project_id, payload_dict)
-        # #region agent log
-        with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-            import json as json_lib, time
-            f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"event_bus.py:59","message":"emit_event after broadcast","data":{"project_id":project_id},"timestamp":int(time.time()*1000)}) + '\n')
-        # #endregion
+        await get_ws_manager().broadcast(project_id, payload_dict)
     except Exception as e:
-        # #region agent log
-        with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-            import json as json_lib, time
-            f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"event_bus.py:61","message":"emit_event broadcast exception","data":{"exc_type":type(e).__name__,"exc_msg":str(e)[:200]},"timestamp":int(time.time()*1000)}) + '\n')
-        # #endregion
         LOGGER.exception("Failed to broadcast WS event for project %s: %s", project_id, e)
 
     # DB (fire and forget; do not block workflow on DB errors)

@@ -1,1 +1,0 @@
-let direction = 'right'; let snake = new Snake(10, 10); function update() {...} setInterval(update, 100); function moveSnake() {...}

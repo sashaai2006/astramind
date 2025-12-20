@@ -1,1 +1,0 @@
-{"name":"sneak","version":"1.0.0","scripts":{"deploy-to-cloud":"aws cloudformation deploy --template-file cloudformation.yaml --stack-name sneak-stack --capabilities CAPABILITY_IAM"},"dependencies":{"aws-sdk":"2.7.24"}}

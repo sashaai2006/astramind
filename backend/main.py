@@ -29,7 +29,8 @@ configure_logging()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    get_settings()
+    settings = get_settings()
+    LOGGER.info("Using projects_root: %s", settings.projects_root.resolve())
     await init_db()
     
     # Optimization: Cleanup "zombie" tasks that were left running when server died

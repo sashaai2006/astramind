@@ -17,6 +17,7 @@ from backend.memory.db import get_session
 from backend.memory import utils as db_utils
 from backend.settings import get_settings
 from backend.utils.logging import get_logger
+from backend.llm.concurrency import get_llm_semaphore
 
 LOGGER = get_logger(__name__)
 
@@ -45,7 +46,15 @@ async def research_node(state: ProjectState) -> Dict[str, Any]:
 
     await emit_event(project_id, f"Research: {query}", agent="researcher")
 
-    researcher = ResearcherAgent()
+    try:
+        LOGGER.info("Creating ResearcherAgent for project %s", project_id)
+        researcher = ResearcherAgent()
+        LOGGER.info("ResearcherAgent created successfully for project %s", project_id)
+    except Exception as e:
+        error_msg = f"Failed to create ResearcherAgent: {str(e)}"
+        LOGGER.exception(error_msg)
+        await emit_event(project_id, error_msg, agent="system", level="error")
+        raise RuntimeError(error_msg)
     # Add timeout to prevent blocking workflow (15s max)
     try:
         payload = await asyncio.wait_for(
@@ -81,17 +90,16 @@ async def research_node(state: ProjectState) -> Dict[str, Any]:
 
 async def plan_node(state: ProjectState) -> Dict[str, Any]:
     project_id = state["project_id"]
+    LOGGER.info("=" * 60)
+    LOGGER.info("PLAN_NODE CALLED: project_id=%s", project_id)
+    LOGGER.info("State keys: %s", list(state.keys()))
+    LOGGER.info("=" * 60)
+    
     description = state["description"]
     target = state["target"]
     persona_prompt = state.get("persona_prompt", "") or ""
     agent_preset = state.get("agent_preset", "") or ""
     settings = get_settings()
-
-    # #region agent log
-    with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-        import json as json_lib, time
-        f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"graph.py:23","message":"plan_node entry","data":{"project_id":project_id,"description_len":len(description)},"timestamp":int(time.time()*1000)}) + '\n')
-    # #endregion
 
     await emit_event(project_id, "Planning project architecture...", agent="ceo")
     
@@ -100,7 +108,29 @@ async def plan_node(state: ProjectState) -> Dict[str, Any]:
         LOGGER.info("CEO planning with agent_preset=%s", agent_preset)
         await emit_event(project_id, f"Using agent: {agent_preset}", agent="ceo", level="info")
 
-    ceo = CEOAgent()
+    # Test LLM adapter before starting
+    try:
+        from backend.llm.adapter import get_llm_adapter
+        adapter = get_llm_adapter()
+        LOGGER.info("LLM adapter ready: %s", type(adapter).__name__)
+    except Exception as e:
+        error_msg = f"LLM adapter not ready: {str(e)}"
+        LOGGER.error(error_msg)
+        await emit_event(project_id, error_msg, agent="ceo", level="error")
+        raise RuntimeError(error_msg)
+
+    try:
+        LOGGER.info("Creating CEOAgent for project %s", project_id)
+        # Pass semaphore to CEO for rate limit control
+        semaphore = get_llm_semaphore()
+        ceo = CEOAgent(semaphore)
+        LOGGER.info("CEOAgent created successfully for project %s", project_id)
+    except Exception as e:
+        error_msg = f"Failed to create CEOAgent: {str(e)}"
+        LOGGER.exception(error_msg)
+        await emit_event(project_id, error_msg, agent="system", level="error")
+        raise RuntimeError(error_msg)
+    
     research_payload = state.get("research_results")
     research_queries = list(state.get("research_queries") or [])
 
@@ -109,15 +139,22 @@ async def plan_node(state: ProjectState) -> Dict[str, Any]:
     if getattr(settings, "enable_web_search", True) and not research_payload:
         try:
             q = _build_research_query(description, target, state.get("tech_stack"))
-            researcher = ResearcherAgent()
-            # Fast timeout (5s) - if it takes longer, skip pre-plan research
-            # Research will happen in research_node anyway
-            research_payload = await asyncio.wait_for(
-                researcher.search(q, project_id=project_id, max_results=getattr(settings, "max_search_results", 5)),
-                timeout=5.0
-            )
-            if q not in research_queries:
-                research_queries.append(q)
+            try:
+                LOGGER.info("Creating ResearcherAgent for pre-plan research for project %s", project_id)
+                researcher = ResearcherAgent()
+                LOGGER.info("ResearcherAgent created successfully for pre-plan research for project %s", project_id)
+            except Exception as e:
+                LOGGER.warning("Failed to create ResearcherAgent for pre-plan research: %s, skipping", e)
+                research_payload = None
+            else:
+                # Fast timeout (5s) - if it takes longer, skip pre-plan research
+                # Research will happen in research_node anyway
+                research_payload = await asyncio.wait_for(
+                    researcher.search(q, project_id=project_id, max_results=getattr(settings, "max_search_results", 5)),
+                    timeout=5.0
+                )
+                if q not in research_queries:
+                    research_queries.append(q)
         except asyncio.TimeoutError:
             LOGGER.debug("Pre-plan research timed out (skipping, will use research_node)")
             research_payload = None
@@ -127,11 +164,6 @@ async def plan_node(state: ProjectState) -> Dict[str, Any]:
     
     # Add timeout to prevent hanging on rate limits
     try:
-        # #region agent log
-        with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-            import json as json_lib, time
-            f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"graph.py:35","message":"plan_node before ceo.plan","data":{},"timestamp":int(time.time()*1000)}) + '\n')
-        # #endregion
         plan = await asyncio.wait_for(
             ceo.plan(
                 description,
@@ -142,35 +174,15 @@ async def plan_node(state: ProjectState) -> Dict[str, Any]:
             ),
             timeout=180.0,
         )
-        # #region agent log
-        with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-            import json as json_lib, time
-            f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"graph.py:38","message":"plan_node after ceo.plan","data":{"plan_len":len(plan) if plan else 0},"timestamp":int(time.time()*1000)}) + '\n')
-        # #endregion
     except asyncio.TimeoutError:
-        # #region agent log
-        with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-            import json as json_lib, time
-            f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"graph.py:40","message":"plan_node timeout","data":{},"timestamp":int(time.time()*1000)}) + '\n')
-        # #endregion
         error_msg = "CEO plan generation timed out (exceeded 180s). This may be due to rate limits."
         LOGGER.error(error_msg)
         await emit_event(project_id, error_msg, agent="ceo", level="error")
         raise RuntimeError(error_msg)
     except Exception as e:
-        # #region agent log
-        with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-            import json as json_lib, time
-            f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"graph.py:47","message":"plan_node exception","data":{"exc_type":type(e).__name__,"exc_msg":str(e)[:300]},"timestamp":int(time.time()*1000)}) + '\n')
-        # #endregion
         raise
     
     if not plan:
-        # #region agent log
-        with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-            import json as json_lib, time
-            f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"graph.py:50","message":"plan_node empty plan","data":{},"timestamp":int(time.time()*1000)}) + '\n')
-        # #endregion
         error_msg = "CEO failed to generate plan (returned empty)"
         LOGGER.error(error_msg)
         await emit_event(project_id, error_msg, agent="ceo", level="error")
@@ -183,39 +195,47 @@ async def plan_node(state: ProjectState) -> Dict[str, Any]:
         payload = first_step.get("payload", {})
         tech_stack = payload.get("tech_stack", "unknown")
 
-    # #region agent log
-    with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-        import json as json_lib, time
-        f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"graph.py:62","message":"plan_node before emit Plan generated","data":{"plan_len":len(plan),"tech_stack":tech_stack},"timestamp":int(time.time()*1000)}) + '\n')
-    # #endregion
     await emit_event(project_id, f"Plan generated with {len(plan)} steps", agent="ceo")
     LOGGER.info("Plan node completed: %d steps, tech_stack=%s", len(plan), tech_stack)
+    LOGGER.info("Returning from plan_node with plan: %s", [s.get("name", "unknown") for s in plan[:3]])
     
-    # #region agent log
-    with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-        import json as json_lib, time
-        f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"graph.py:66","message":"plan_node returning","data":{"plan_len":len(plan),"status":"generating"},"timestamp":int(time.time()*1000)}) + '\n')
-    # #endregion
-    return {
+    result = {
         "plan": plan, 
         "tech_stack": tech_stack,
         "research_results": research_payload,
         "research_queries": research_queries,
         "status": "generating"
     }
+    LOGGER.info("plan_node returning state keys: %s", list(result.keys()))
+    return result
 
 async def generate_node(state: ProjectState) -> Dict[str, Any]:
     project_id = state["project_id"]
-    plan = state["plan"]
+    plan = state.get("plan", [])
     current_idx = state.get("current_step_idx", 0)
     
-    # #region agent log
-    with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-        import json as json_lib, time
-        f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"graph.py:65","message":"generate_node entry","data":{"project_id":project_id,"plan_len":len(plan),"current_idx":current_idx},"timestamp":int(time.time()*1000)}) + '\n')
-    # #endregion
-    LOGGER.info("Generate node starting: project_id=%s, plan_steps=%d, current_idx=%d", project_id, len(plan), current_idx)
-    await emit_event(project_id, f"Starting code generation ({len(plan)} steps)...", agent="system")
+    LOGGER.info("=" * 60)
+    LOGGER.info("GENERATE_NODE CALLED: project_id=%s", project_id)
+    LOGGER.info("Plan length: %d, current_idx: %d", len(plan), current_idx)
+    LOGGER.info("Plan content: %s", [s.get("name", "unknown") for s in plan[:5]])
+    LOGGER.info("=" * 60)
+    
+    await emit_event(project_id, "Generate node entered", agent="system", level="info")
+    
+    if not plan:
+        error_msg = "Plan is empty, cannot generate code"
+        LOGGER.error(error_msg)
+        await emit_event(project_id, error_msg, agent="system", level="error")
+        raise ValueError(error_msg)
+    
+    if current_idx >= len(plan):
+        LOGGER.info("All steps already completed, skipping generation")
+        return {
+            "current_step_idx": len(plan),
+            "status": "testing"
+        }
+    
+    await emit_event(project_id, f"Starting code generation ({len(plan) - current_idx} steps remaining)...", agent="system")
     
     # We execute ALL remaining steps here for now, 
     # but strictly we could do one by one. 
@@ -224,8 +244,16 @@ async def generate_node(state: ProjectState) -> Dict[str, Any]:
     # if we want granular checkpointing per step.
     
     settings = get_settings()
-    semaphore = asyncio.Semaphore(settings.llm_semaphore)
-    developer = DeveloperAgent(semaphore)
+    semaphore = get_llm_semaphore()
+    try:
+        LOGGER.info("Creating DeveloperAgent for project %s", project_id)
+        developer = DeveloperAgent(semaphore)
+        LOGGER.info("DeveloperAgent created successfully for project %s", project_id)
+    except Exception as e:
+        error_msg = f"Failed to create DeveloperAgent: {str(e)}"
+        LOGGER.exception(error_msg)
+        await emit_event(project_id, error_msg, agent="system", level="error")
+        raise RuntimeError(error_msg)
     from backend.core.orchestrator import orchestrator
     stop_event = orchestrator.get_stop_event(project_id)
 
@@ -247,28 +275,34 @@ async def generate_node(state: ProjectState) -> Dict[str, Any]:
         "research_queries": state.get("research_queries"),
     }
 
-    # Identify groups
     from backend.core.step_utils import group_steps
-    groups = group_steps(plan[current_idx:])
+    remaining_steps = plan[current_idx:]
     
+    if not remaining_steps:
+        LOGGER.warning("No remaining steps to execute")
+        return {
+            "current_step_idx": len(plan),
+            "status": "testing"
+        }
+    
+    groups = group_steps(remaining_steps)
     total_groups = len(groups)
-    LOGGER.info("Generate node: %d groups to execute", total_groups)
+    LOGGER.info("Generate node: %d groups to execute, %d total steps", total_groups, len(remaining_steps))
     
     for group_idx, (group_id, steps) in enumerate(groups, 1):
-        group_msg = f"Executing group {group_id} ({group_idx}/{total_groups})"
+        group_msg = f"Executing group {group_id} ({group_idx}/{total_groups}, {len(steps)} steps)"
         LOGGER.info(group_msg)
         await emit_event(project_id, group_msg, agent="system")
         
-        # Run steps in parallel
         try:
-            await asyncio.gather(
-                *[
-                    _run_single_step(developer, step, context, stop_event, on_message)
-                    for step in steps
-                ],
-                return_exceptions=False
-            )
+            # Sequential execution within groups to be less aggressive with LLM limits
+            for step in steps:
+                if stop_event.is_set():
+                    break
+                await _run_single_step(developer, step, context, stop_event, on_message)
+            
             await emit_event(project_id, f"Group {group_id} completed", agent="system")
+            LOGGER.info("Group %s completed successfully", group_id)
         except Exception as e:
             LOGGER.error("Group %s failed: %s", group_id, e, exc_info=True)
             await emit_event(project_id, f"Group {group_id} failed: {str(e)[:200]}", agent="system", level="error")
@@ -285,18 +319,23 @@ async def generate_node(state: ProjectState) -> Dict[str, Any]:
 async def _run_single_step(developer, step, context, stop_event, on_message):
     project_id = context["project_id"]
     step_name = step.get("name", "unknown")
+    step_payload = step.get("payload", {})
+    files_spec = step_payload.get("files", [])
     
     if stop_event.is_set():
         raise asyncio.CancelledError()
 
-    await emit_event(project_id, f"Step {step_name} started", agent="developer")
+    LOGGER.info("Running step: %s, files: %d", step_name, len(files_spec))
+    await emit_event(project_id, f"Step {step_name} started ({len(files_spec)} files)", agent="developer")
     
     try:
         await developer.run(step, context, stop_event, on_message)
         await emit_event(project_id, f"Step {step_name} finished", agent="developer")
+        LOGGER.info("Step %s completed successfully", step_name)
     except Exception as e:
-        await emit_event(project_id, f"Step {step_name} failed: {e}", agent="developer", level="error")
-        raise e
+        LOGGER.error("Step %s failed: %s", step_name, e, exc_info=True)
+        await emit_event(project_id, f"Step {step_name} failed: {str(e)[:200]}", agent="developer", level="error")
+        raise
 
 async def test_node(state: ProjectState) -> Dict[str, Any]:
     project_id = state["project_id"]
@@ -308,7 +347,17 @@ async def test_node(state: ProjectState) -> Dict[str, Any]:
     
     await emit_event(project_id, "Running tests...", agent="tester")
     
-    tester = TesterAgent()
+    try:
+        LOGGER.info("Creating TesterAgent for project %s", project_id)
+        # Pass semaphore to Tester for rate limit control
+        semaphore = get_llm_semaphore()
+        tester = TesterAgent(semaphore)
+        LOGGER.info("TesterAgent created successfully for project %s", project_id)
+    except Exception as e:
+        error_msg = f"Failed to create TesterAgent: {str(e)}"
+        LOGGER.exception(error_msg)
+        await emit_event(project_id, error_msg, agent="system", level="error")
+        raise RuntimeError(error_msg)
     context = {
         "project_id": project_id,
         "title": state["title"],
@@ -343,8 +392,16 @@ async def correct_node(state: ProjectState) -> Dict[str, Any]:
     )
     
     settings = get_settings()
-    semaphore = asyncio.Semaphore(settings.llm_semaphore)
-    developer = DeveloperAgent(semaphore)
+    semaphore = get_llm_semaphore()
+    try:
+        LOGGER.info("Creating DeveloperAgent for project %s", project_id)
+        developer = DeveloperAgent(semaphore)
+        LOGGER.info("DeveloperAgent created successfully for project %s", project_id)
+    except Exception as e:
+        error_msg = f"Failed to create DeveloperAgent: {str(e)}"
+        LOGGER.exception(error_msg)
+        await emit_event(project_id, error_msg, agent="system", level="error")
+        raise RuntimeError(error_msg)
     from backend.core.orchestrator import orchestrator
     stop_event = orchestrator.get_stop_event(project_id)
     
@@ -401,11 +458,15 @@ def create_project_graph(checkpointer: BaseCheckpointSaver):
 
     workflow.set_entry_point("plan_node")
 
-    # Optional web research stage between plan and generate
     def should_research(state: ProjectState) -> Literal["research_node", "generate_node"]:
         settings = get_settings()
-        if getattr(settings, "enable_web_search", True):
+        enable_search = getattr(settings, "enable_web_search", False)
+        project_id = state.get("project_id", "unknown")
+        LOGGER.info("should_research: project_id=%s, enable_web_search=%s", project_id, enable_search)
+        if enable_search:
+            LOGGER.info("Routing to research_node for project %s", project_id)
             return "research_node"
+        LOGGER.info("Routing to generate_node for project %s", project_id)
         return "generate_node"
 
     workflow.add_conditional_edges("plan_node", should_research)

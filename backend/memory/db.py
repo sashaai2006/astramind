@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
@@ -14,8 +15,12 @@ from backend.utils.logging import get_logger
 
 from . import models
 
+from backend.settings import get_settings
+
 LOGGER = get_logger(__name__)
-DATABASE_PATH = Path(__file__).resolve().parents[1] / "data.db"
+# Use settings for data directory
+_settings = get_settings()
+DATABASE_PATH = _settings.data_root / "data.db"
 DATABASE_URL = f"sqlite+aiosqlite:///{DATABASE_PATH}"
 
 from sqlalchemy.pool import AsyncAdaptedQueuePool

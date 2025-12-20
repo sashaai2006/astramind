@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Dict, Mapping, Set, List
+from typing import Any, Dict, Mapping, Set, List, Optional
 
 from fastapi import WebSocket
 
@@ -30,44 +30,18 @@ class WSManager:
         async with self._lock:
             connections = list(self._connections.get(project_id, set()))
 
-        # #region agent log
-        with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-            import json as json_lib, time
-            f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"ws_manager.py:31","message":"broadcast entry","data":{"project_id":project_id,"connections_count":len(connections),"msg":payload.get("msg","")[:50]},"timestamp":int(time.time()*1000)}) + '\n')
-        # #endregion
-
         if not connections:
             # No connections - skip silently (project might not have active viewers)
-            # #region agent log
-            with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-                import json as json_lib, time
-                f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"ws_manager.py:36","message":"broadcast no connections","data":{"project_id":project_id},"timestamp":int(time.time()*1000)}) + '\n')
-            # #endregion
             return
 
         message = json.dumps(payload, default=str)
 
         async def _send(connection: WebSocket) -> WebSocket | None:
             try:
-                # #region agent log
-                with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-                    import json as json_lib, time
-                    f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"ws_manager.py:42","message":"broadcast before send_text","data":{},"timestamp":int(time.time()*1000)}) + '\n')
-                # #endregion
                 # Avoid one slow client stalling broadcasts
                 await asyncio.wait_for(connection.send_text(message), timeout=2.0)
-                # #region agent log
-                with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-                    import json as json_lib, time
-                    f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"ws_manager.py:46","message":"broadcast after send_text success","data":{},"timestamp":int(time.time()*1000)}) + '\n')
-                # #endregion
                 return None
             except Exception as e:
-                # #region agent log
-                with open('/Users/sasii/Code/projects/.cursor/debug.log', 'a') as f:
-                    import json as json_lib, time
-                    f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"ws_manager.py:49","message":"broadcast send_text exception","data":{"exc_type":type(e).__name__,"exc_msg":str(e)[:200]},"timestamp":int(time.time()*1000)}) + '\n')
-                # #endregion
                 # Log but don't fail the whole broadcast
                 from backend.utils.logging import get_logger
                 logger = get_logger(__name__)
@@ -87,5 +61,10 @@ class WSManager:
                     for conn in dead_connections:
                         conns.discard(conn)
 
-ws_manager = WSManager()
+_ws_manager: Optional[WSManager] = None
 
+def get_ws_manager() -> WSManager:
+    global _ws_manager
+    if _ws_manager is None:
+        _ws_manager = WSManager()
+    return _ws_manager

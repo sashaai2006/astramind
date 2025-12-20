@@ -1,1 +1,0 @@
-fastapi==0.92.1\nuvicorn==0.17.6\npydantic==1.10.2\nsqlalchemy==1.4.39\npyjwt==2.4.0\n

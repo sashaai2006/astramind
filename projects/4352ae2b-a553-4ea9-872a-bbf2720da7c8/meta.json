@@ -1,5 +1,0 @@
-{
-  "title": "3D Snake Game",
-  "description": "A classic Snake game built with Three.js and React. It should feature a 3D grid, a snake that grows when eating food, and score tracking.",
-  "target": "web"
-}

@@ -53,131 +53,197 @@ class Orchestrator:
         project_str = str(project_id)
         LOGGER.info("Starting project %s via LangGraph", project_str)
         
-        from backend.core.event_bus import emit_event
-        asyncio.create_task(
-            emit_event(project_str, f"Starting project: {title}", agent="system", level="info")
-        )
+        try:
+            from backend.core.event_bus import emit_event
+            from backend.llm.adapter import get_llm_adapter
+            from backend.settings import get_settings
+            
+            settings = get_settings()
+            LOGGER.info("LLM mode: %s", settings.llm_mode)
+            
+            try:
+                adapter = get_llm_adapter()
+                LOGGER.info("LLM adapter initialized: %s", type(adapter).__name__)
+            except Exception as e:
+                LOGGER.error("Failed to initialize LLM adapter: %s", e)
+                await emit_event(project_str, f"LLM initialization failed: {str(e)}", agent="system", level="error")
+                raise RuntimeError(f"LLM adapter initialization failed: {str(e)}")
+            
+            asyncio.create_task(
+                emit_event(project_str, f"Starting project: {title}", agent="system", level="info")
+            )
 
-        agent_preset: Optional[str] = None
-        custom_agent_id: Optional[str] = None
-        team_id: Optional[str] = None
-        persona_prompt: Optional[str] = None
-        
-        async def _load_agent_config():
-            async with get_session() as session:
-                from sqlalchemy import select
-                project = await db_utils.get_project(session, project_id)
-                if project is not None:
-                    agent_preset_val = getattr(project, "agent_preset", None)
-                    custom_agent_id_val = str(getattr(project, "custom_agent_id", None)) if getattr(project, "custom_agent_id", None) else None
-                    team_id_val = str(getattr(project, "team_id", None)) if getattr(project, "team_id", None) else None
-                    persona_prompt_val: Optional[str] = None
+            agent_preset: Optional[str] = None
+            custom_agent_id: Optional[str] = None
+            team_id: Optional[str] = None
+            persona_prompt: Optional[str] = None
+            
+            async def _load_agent_config():
+                async with get_session() as session:
+                    from sqlalchemy import select
+                    project = await db_utils.get_project(session, project_id)
+                    if project is not None:
+                        agent_preset_val = getattr(project, "agent_preset", None)
+                        custom_agent_id_val = str(getattr(project, "custom_agent_id", None)) if getattr(project, "custom_agent_id", None) else None
+                        team_id_val = str(getattr(project, "team_id", None)) if getattr(project, "team_id", None) else None
+                        persona_prompt_val: Optional[str] = None
 
-                    if getattr(project, "custom_agent_id", None):
-                        res = await session.execute(
-                            select(CustomAgent).where(CustomAgent.id == project.custom_agent_id)
-                        )
-                        agent = res.scalar_one_or_none()
-                        if agent:
-                            tech = ", ".join(agent.tech_stack or [])
-                            persona_prompt_val = (
-                                f"=== CUSTOM AGENT: {agent.name} ===\n"
-                                f"{agent.prompt}\n"
-                                + (f"\nTech Stack: {tech}\n" if tech else "")
+                        if getattr(project, "custom_agent_id", None):
+                            res = await session.execute(
+                                select(CustomAgent).where(CustomAgent.id == project.custom_agent_id)
                             )
-                    elif getattr(project, "team_id", None):
-                        res = await session.execute(select(Team).where(Team.id == project.team_id))
-                        team = res.scalar_one_or_none()
-                        if team:
-                            res_members = await session.execute(
-                                select(TeamMember).where(TeamMember.team_id == team.id)
-                            )
-                            members = list(res_members.scalars().all())
-                            custom_ids = {m.custom_agent_id for m in members if m.custom_agent_id}
-                            preset_ids = {m.preset_id for m in members if m.preset_id}
-
-                            res_links = await session.execute(
-                                select(TeamAgentLink.agent_id).where(TeamAgentLink.team_id == team.id)
-                            )
-                            for row in res_links.all():
-                                custom_ids.add(row[0])
-
-                            members_prompt = ""
-                            blocks = []
-
-                            for pid in sorted(preset_ids):
-                                preset = get_preset_by_id(pid)
-                                if not preset:
-                                    continue
-                                tags = ", ".join(preset.tags or [])
-                                blocks.append(
-                                    f"--- PRESET: {preset.name} ({preset.id}) ---\n"
-                                    f"{preset.persona_prompt}\n"
-                                    + (f"\nTags: {tags}\n" if tags else "")
+                            agent = res.scalar_one_or_none()
+                            if agent:
+                                tech = ", ".join(agent.tech_stack or [])
+                                persona_prompt_val = (
+                                    f"=== CUSTOM AGENT: {agent.name} ===\n"
+                                    f"{agent.prompt}\n"
+                                    + (f"\nTech Stack: {tech}\n" if tech else "")
                                 )
-
-                            if custom_ids:
-                                res_agents = await session.execute(
-                                    select(CustomAgent).where(CustomAgent.id.in_(sorted(custom_ids)))
+                        elif getattr(project, "team_id", None):
+                            res = await session.execute(select(Team).where(Team.id == project.team_id))
+                            team = res.scalar_one_or_none()
+                            if team:
+                                res_members = await session.execute(
+                                    select(TeamMember).where(TeamMember.team_id == team.id)
                                 )
-                                custom_members = list(res_agents.scalars().all())
-                                for m in custom_members:
-                                    tech = ", ".join(m.tech_stack or [])
+                                members = list(res_members.scalars().all())
+                                custom_ids = {m.custom_agent_id for m in members if m.custom_agent_id}
+                                preset_ids = {m.preset_id for m in members if m.preset_id}
+
+                                res_links = await session.execute(
+                                    select(TeamAgentLink.agent_id).where(TeamAgentLink.team_id == team.id)
+                                )
+                                for row in res_links.all():
+                                    custom_ids.add(row[0])
+
+                                members_prompt = ""
+                                blocks = []
+
+                                for pid in sorted(preset_ids):
+                                    preset = get_preset_by_id(pid)
+                                    if not preset:
+                                        continue
+                                    tags = ", ".join(preset.tags or [])
                                     blocks.append(
-                                        f"--- {m.name} ---\n{m.prompt}\n" + (f"\nTech Stack: {tech}\n" if tech else "")
+                                        f"--- PRESET: {preset.name} ({preset.id}) ---\n"
+                                        f"{preset.persona_prompt}\n"
+                                        + (f"\nTags: {tags}\n" if tags else "")
                                     )
 
-                            members_prompt = "\n\n".join(blocks)
-                            persona_prompt_val = (
-                                f"=== TEAM: {team.name} ===\n"
-                                + (f"{team.description}\n\n" if team.description else "")
-                                + (members_prompt if members_prompt else "No members.\n")
-                            )
+                                if custom_ids:
+                                    res_agents = await session.execute(
+                                        select(CustomAgent).where(CustomAgent.id.in_(sorted(custom_ids)))
+                                    )
+                                    custom_members = list(res_agents.scalars().all())
+                                    for m in custom_members:
+                                        tech = ", ".join(m.tech_stack or [])
+                                        blocks.append(
+                                            f"--- {m.name} ---\n{m.prompt}\n" + (f"\nTech Stack: {tech}\n" if tech else "")
+                                        )
 
-                    return agent_preset_val, custom_agent_id_val, team_id_val, persona_prompt_val
-            return None, None, None, None
-        
-        try:
-            agent_preset, custom_agent_id, team_id, persona_prompt = await asyncio.wait_for(
-                _load_agent_config(), 
-                timeout=0.15
-            )
-        except (asyncio.TimeoutError, Exception) as e:
-            LOGGER.debug("Using default agent config: %s", e)
+                                members_prompt = "\n\n".join(blocks)
+                                persona_prompt_val = (
+                                    f"=== TEAM: {team.name} ===\n"
+                                    + (f"{team.description}\n\n" if team.description else "")
+                                    + (members_prompt if members_prompt else "No members.\n")
+                                )
 
-        initial_state: ProjectState = {
-            "project_id": project_str,
-            "title": title,
-            "description": description,
-            "target": target,
-            "tech_stack": None,
-            "agent_preset": agent_preset,
-            "custom_agent_id": custom_agent_id,
-            "team_id": team_id,
-            "persona_prompt": persona_prompt,
-            "research_results": None,
-            "research_queries": [],
-            "plan": [],
-            "current_step_idx": 0,
-            "generated_files": [],
-            "test_results": None,
-            "retry_count": 0,
-            "status": "planning"
-        }
-        
-        task = asyncio.create_task(self._run_workflow(project_str, initial_state))
-        self._tasks[project_str] = task
-        task.add_done_callback(lambda _: self._tasks.pop(project_str, None))
+                        return agent_preset_val, custom_agent_id_val, team_id_val, persona_prompt_val
+                return None, None, None, None
+            
+            try:
+                agent_preset, custom_agent_id, team_id, persona_prompt = await asyncio.wait_for(
+                    _load_agent_config(), 
+                    timeout=0.15
+                )
+            except (asyncio.TimeoutError, Exception) as e:
+                LOGGER.debug("Using default agent config: %s", e)
+
+            initial_state: ProjectState = {
+                "project_id": project_str,
+                "title": title,
+                "description": description,
+                "target": target,
+                "tech_stack": None,
+                "agent_preset": agent_preset,
+                "custom_agent_id": custom_agent_id,
+                "team_id": team_id,
+                "persona_prompt": persona_prompt,
+                "research_results": None,
+                "research_queries": [],
+                "plan": [],
+                "current_step_idx": 0,
+                "generated_files": [],
+                "test_results": None,
+                "retry_count": 0,
+                "status": "planning"
+            }
+            
+            task = asyncio.create_task(self._run_workflow(project_str, initial_state))
+            self._tasks[project_str] = task
+            task.add_done_callback(lambda _: self._tasks.pop(project_str, None))
+        except Exception as e:
+            LOGGER.exception("Failed to start project %s: %s", project_str, e)
+            async with get_session() as session:
+                await db_utils.update_project_status(session, project_id, "failed")
+            raise
 
     async def _run_workflow(self, project_id: str, state: ProjectState = None):
         try:
-            graph = await self._get_graph()
+            LOGGER.info("Getting graph for project %s", project_id)
+            try:
+                graph = await self._get_graph()
+                LOGGER.info("Graph obtained successfully for project %s", project_id)
+            except Exception as graph_error:
+                LOGGER.exception("Failed to get graph for project %s: %s", project_id, graph_error)
+                from backend.core.event_bus import emit_event
+                await emit_event(project_id, f"Failed to initialize workflow: {str(graph_error)[:200]}", agent="system", level="error")
+                async with get_session() as session:
+                    await db_utils.update_project_status(session, UUID(project_id), "failed")
+                return
+            
             config = {"configurable": {"thread_id": project_id}}
             
-            async with get_session() as session:
-                await db_utils.update_project_status(session, UUID(project_id), "running")
+            try:
+                async with get_session() as session:
+                    await db_utils.update_project_status(session, UUID(project_id), "running")
+                LOGGER.info("Project status updated to 'running' for project %s", project_id)
+            except Exception as status_error:
+                LOGGER.warning("Failed to update project status to 'running' for project %s: %s", project_id, status_error)
 
-            await graph.ainvoke(state, config=config)
+            LOGGER.info("Invoking graph for project %s with state keys: %s", project_id, list(state.keys()) if state else "None")
+            from backend.core.event_bus import emit_event
+            await emit_event(project_id, "Starting workflow...", agent="system", level="info")
+            
+            try:
+                LOGGER.info("Calling graph.ainvoke for project %s", project_id)
+                result = await asyncio.wait_for(
+                    graph.ainvoke(state, config=config),
+                    timeout=600.0
+                )
+                LOGGER.info("graph.ainvoke completed for project %s, result keys: %s", project_id, list(result.keys()) if result else "None")
+                
+                final_status = result.get("status", "done")
+                if final_status == "done":
+                    LOGGER.info("Workflow completed successfully for project %s, updating status to 'done'", project_id)
+                    async with get_session() as session:
+                        await db_utils.update_project_status(session, UUID(project_id), "done")
+                        await session.commit()
+            except asyncio.TimeoutError:
+                error_msg = "Workflow timed out after 600s"
+                LOGGER.error("%s for project %s", error_msg, project_id)
+                await emit_event(project_id, error_msg, agent="system", level="error")
+                async with get_session() as session:
+                    await db_utils.update_project_status(session, UUID(project_id), "failed")
+                raise RuntimeError(error_msg)
+            except Exception as invoke_error:
+                LOGGER.exception("graph.ainvoke failed for project %s: %s", project_id, invoke_error)
+                error_msg = f"Workflow execution failed: {str(invoke_error)[:200]}"
+                await emit_event(project_id, error_msg, agent="system", level="error")
+                async with get_session() as session:
+                    await db_utils.update_project_status(session, UUID(project_id), "failed")
+                raise
         except asyncio.CancelledError:
             LOGGER.info("Workflow cancelled for project %s", project_id)
             async with get_session() as session:
@@ -185,6 +251,8 @@ class Orchestrator:
             raise
         except Exception as e:
             LOGGER.exception("Workflow failed for project %s: %s", project_id, e)
+            from backend.core.event_bus import emit_event
+            await emit_event(project_id, f"Workflow error: {str(e)[:200]}", agent="system", level="error")
             async with get_session() as session:
                 await db_utils.update_project_status(session, UUID(project_id), "failed")
 

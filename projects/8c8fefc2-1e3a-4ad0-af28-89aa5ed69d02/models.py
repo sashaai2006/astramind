@@ -1,1 +1,0 @@
-from pydantic import BaseModel\nfrom sqlalchemy import Column, Integer, String\nfrom sqlalchemy.ext.declarative import declarative_base\n\nBase = declarative_base()\n\nclass User(Base, BaseModel):\n    __tablename__ = 'users'\n    id = Column(Integer, primary_key=True)\n    username = Column(String)

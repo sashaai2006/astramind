@@ -1,1 +1,0 @@
-from sqlalchemy import create_engine\nfrom sqlalchemy.ext.declarative import declarative_base\n\nengine = create_engine('sqlite:///database.db')\nBase = declarative_base()\n\nBase.metadata.create_all(engine)

@@ -1,1 +1,0 @@
-console.log('Sneak 2D is running...');

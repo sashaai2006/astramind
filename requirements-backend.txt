@@ -8,7 +8,7 @@ pydantic[email]
 pydantic-settings>=2.0.0
 python-multipart==0.0.6
 requests==2.31.0
-greenlet>=3.0.3
+greenlet==3.0.3
 tenacity==8.2.3
 aiofiles==23.2.1
 duckduckgo-search>=8.0.0

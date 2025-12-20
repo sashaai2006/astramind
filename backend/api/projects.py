@@ -18,7 +18,7 @@ from backend.core.event_bus import emit_event
 from backend.memory import utils as db_utils
 from backend.memory.db import get_session_dependency
 from backend.memory.models import Project
-from backend.memory.vector_store import get_project_memory, get_semantic_cache
+from backend.memory.vector_store import get_project_memory
 from backend.memory.knowledge_sources import get_knowledge_registry, KnowledgeSource
 from backend.settings import get_settings
 from backend.utils import fileutils
@@ -114,21 +114,30 @@ async def create_project(
     await session.refresh(project)
 
     settings = get_settings()
-    fileutils.ensure_project_dir(
-        settings.projects_root,
-        str(project.id),
-        {
-            "title": payload.title,
-            "description": payload.description,
-            "target": payload.target,
-        },
-    )
+    try:
+        fileutils.ensure_project_dir(
+            settings.projects_root,
+            str(project.id),
+            {
+                "title": payload.title,
+                "description": payload.description,
+                "target": payload.target,
+            },
+        )
 
-    await orchestrator.async_start(
-        project.id, payload.title, payload.description, payload.target
-    )
+        await orchestrator.async_start(
+            project.id, payload.title, payload.description, payload.target
+        )
 
-    return {"project_id": str(project.id), "status": "created"}
+        return {"project_id": str(project.id), "status": "created"}
+    except Exception as e:
+        LOGGER.exception("Failed to start project %s: %s", project.id, e)
+        await db_utils.update_project_status(session, project.id, "failed")
+        await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start project: {str(e)}"
+        )
 
 @router.delete("/{project_id}")
 async def delete_project(
@@ -222,8 +231,9 @@ async def get_status(
         ]
     
     return ProjectStatusResponse(
-        project_id=str(project.id),
-        status=project.status,  # type: ignore[arg-type]
+        id=str(project.id),
+        status=project.status,
+        version=0,
         steps=steps,
         artifacts=[
             {
@@ -239,7 +249,11 @@ async def list_files(project_id: UUID) -> List[FileEntry]:
     project_path = _project_path(project_id)
     if not project_path.exists():
         raise HTTPException(status_code=404, detail="Project not found")
-    return fileutils.iter_file_entries(project_path)
+    entries = fileutils.iter_file_entries(project_path)
+    LOGGER.info("list_files: project_id=%s, project_path=%s, found %d entries", project_id, project_path, len(entries))
+    result = [FileEntry(path=entry.path, is_dir=entry.is_dir) for entry in entries]
+    LOGGER.debug("list_files: returning %d files: %s", len(result), [e.path for e in result[:10]])
+    return result
 
 @router.get("/{project_id}/file")
 async def read_file(
@@ -550,9 +564,7 @@ async def get_relevant_context(
 
 @router.delete("/cache/clear")
 async def clear_semantic_cache() -> Dict:
-    cache = get_semantic_cache()
-    success = cache.clear()
-    return {"success": success, "message": "Semantic cache cleared" if success else "Failed to clear cache"}
+    return {"success": True, "message": "Cache is disabled"}
 
 # ============ Knowledge Sources API ============
 

@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from backend.memory.vector_store import get_project_memory, get_semantic_cache
+from backend.memory.vector_store import get_project_memory
 from backend.settings import get_settings
 from backend.utils.logging import get_logger
 
@@ -29,10 +29,6 @@ class ResearcherAgent:
 
     def __init__(self) -> None:
         self._settings = get_settings()
-        self._cache = get_semantic_cache()
-
-    def _cache_key(self, query: str, provider: str) -> str:
-        return f"web_search::{provider}::{query.strip()}"
 
     async def search(self, query: str, project_id: Optional[str] = None, max_results: int = 5) -> Dict[str, Any]:
         query = (query or "").strip()
@@ -41,17 +37,6 @@ class ResearcherAgent:
 
         provider = self._settings.search_provider
         max_results = max(1, min(int(max_results), int(self._settings.max_search_results)))
-
-        # Semantic cache lookup
-        cache_key = self._cache_key(query, provider)
-        cached = self._cache.get(cache_key, filter_metadata={"type": "web_search", "provider": provider})
-        if cached:
-            try:
-                payload = json.loads(cached)
-                payload["cached"] = True
-                return payload
-            except Exception:
-                LOGGER.debug("Failed to parse cached web search payload; ignoring cache.")
 
         # Run provider
         payload: Dict[str, Any]
@@ -74,17 +59,7 @@ class ResearcherAgent:
         payload["cached"] = False
         payload["timestamp_ms"] = int(time.time() * 1000)
 
-        # Store in semantic cache
-        try:
-            self._cache.set(
-                cache_key,
-                json.dumps(payload, ensure_ascii=False),
-                metadata={"type": "web_search", "provider": provider},
-            )
-        except Exception:
-            LOGGER.debug("Failed to write web search results to semantic cache.", exc_info=True)
-
-        # Store in project memory too (so LLM can retrieve later even if state isn't threaded)
+        # Store in project memory (so LLM can retrieve later even if state isn't threaded)
         if project_id:
             try:
                 pm = get_project_memory(project_id)

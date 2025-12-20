@@ -27,15 +27,17 @@ class GroqLLMAdapter(BaseLLMAdapter):
         settings = get_settings()
         api_key = settings.groq_api_key or os.getenv("GROQ_API_KEY")
         if not api_key:
-            LOGGER.warning("GROQ_API_KEY not found. Groq adapter will fail.")
+            # Fail fast with a clear message so users know how to fix it
+            LOGGER.critical("Groq API key not configured. Set GROQ_API_KEY in the environment or groq_api_key in .env/settings.")
+            raise RuntimeError("Groq API key is required. Set the GROQ_API_KEY environment variable or define groq_api_key in the project's .env file.")
         self.client = AsyncGroq(api_key=api_key)
         self.model = model
 
     @retry(
         retry=retry_if_exception_type((RateLimitError, InternalServerError, APIConnectionError)),
-        # Rate limits often require longer cool-downs than 20s.
-        wait=wait_exponential(multiplier=1, min=2, max=60),
-        stop=stop_after_attempt(8),
+        # Бесплатный Groq требует долгих пауз при ошибках 429
+        wait=wait_exponential(multiplier=2, min=5, max=120),
+        stop=stop_after_attempt(10),
         before_sleep=before_sleep_log(LOGGER, logging.INFO),
     )
     async def acomplete(self, prompt: str, json_mode: bool = False, cache_key: Optional[str] = None) -> str:

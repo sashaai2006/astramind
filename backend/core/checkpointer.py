@@ -10,16 +10,43 @@ from backend.utils.logging import get_logger
 
 LOGGER = get_logger(__name__)
 
+if not hasattr(aiosqlite.Connection, 'is_alive'):
+    def is_alive(self):
+        try:
+            return hasattr(self, '_connection') and self._connection is not None
+        except (AttributeError, RuntimeError):
+            return False
+    
+    aiosqlite.Connection.is_alive = is_alive
+
 _saver: AsyncSqliteSaver | None = None
 _conn: aiosqlite.Connection | None = None
 
 async def get_checkpointer() -> AsyncSqliteSaver:
     global _saver, _conn
     
-    if _saver is not None:
-        return _saver
+    # If we already have a saver and an active connection, reuse it.
+    if _saver is not None and _conn is not None:
+        try:
+            if getattr(_conn, "is_alive", lambda: False)():
+                return _saver
+            else:
+                LOGGER.warning("Existing checkpointer connection is not alive; reinitializing")
+                # Attempt a clean close if possible
+                try:
+                    await _conn.close()
+                except Exception:
+                    pass
+                _conn = None
+                _saver = None
+        except Exception:
+            # Defensive: if anything goes wrong, reinitialize below
+            _conn = None
+            _saver = None
     
-    db_path = Path(__file__).parent.parent / "data" / "langgraph_checkpoints.db"
+    from backend.settings import get_settings
+    settings = get_settings()
+    db_path = settings.data_root / "langgraph_checkpoints.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     
     try:

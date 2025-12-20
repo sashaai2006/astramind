@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from backend.core.document_ws_manager import document_ws_manager
+from backend.core.document_ws_manager import get_document_ws_manager
 from backend.memory.db import get_session
 from backend.memory import utils as db_utils
 from backend.utils.logging import get_logger
@@ -43,7 +43,7 @@ async def emit_document_event(
 
     # WS best-effort
     try:
-        await document_ws_manager.broadcast(document_id, payload.model_dump())
+        await get_document_ws_manager().broadcast(document_id, payload.model_dump())
     except Exception:
         LOGGER.exception("Failed to broadcast document WS event for %s", document_id)
 

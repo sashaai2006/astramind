@@ -5,6 +5,7 @@ import { LogEvent } from '../components/LogPanel';
 import { Step } from '../components/DAGView';
 import { Message } from '../components/ChatPanel';
 import { soundManager } from '../utils/sound';
+import { ApiClient } from '../utils/api';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 const WS_BASE = API_BASE.replace("http", "ws");
@@ -54,9 +55,11 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const fetchFiles = useCallback(async () => {
     if (!projectId) return;
-    const response = await fetch(`${API_BASE}/api/projects/${projectId}/files`);
-    if (response.ok) {
-      setFiles(await response.json());
+    try {
+      const files = await ApiClient.getProjectFiles(projectId);
+      setFiles(files);
+    } catch (error) {
+      console.error("Failed to fetch files:", error);
     }
   }, [projectId]);
 
@@ -65,29 +68,28 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const fetchStatus = useCallback(async () => {
     if (!projectId) return;
-    const response = await fetch(`${API_BASE}/api/projects/${projectId}/status`);
-    if (response.ok) {
-      const data = await response.json();
+    try {
+      const data = await ApiClient.getProjectStatus(projectId);
       const newStatus = data.status;
-      setSteps(data.steps);
+      setSteps(data.steps || []);
       setStatus(newStatus);
-      // Refresh files when project completes
       if (newStatus === "done" && statusRef.current !== "done") {
         setTimeout(() => fetchFiles(), 300);
       }
+    } catch (error) {
+      console.error("Failed to fetch status:", error);
     }
   }, [projectId, fetchFiles]);
 
   const fetchFileContent = useCallback(
     async (path: string, versionOverride?: number) => {
       if (!projectId) return;
-      const versionToUse = versionOverride ?? version;
-      const response = await fetch(
-        `${API_BASE}/api/projects/${projectId}/file?path=${encodeURIComponent(path)}&version=${versionToUse}`,
-      );
-      if (response.ok) {
-        const text = await response.text();
+      try {
+        const versionToUse = versionOverride ?? version;
+        const text = await ApiClient.getFileContent(projectId, path, versionToUse);
         setFileContent(text);
+      } catch (error) {
+        console.error("Failed to fetch file content:", error);
       }
     },
     [projectId, version],
@@ -178,28 +180,25 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const handleSave = async (content: string) => {
     if (!projectId || !selectedFile) return;
-    soundManager.playClick();
-    await fetch(`${API_BASE}/api/projects/${projectId}/file`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: selectedFile, content }),
-    });
-    await fetchFiles();
+    try {
+      soundManager.playClick();
+      await ApiClient.saveFile(projectId, selectedFile, content);
+      await fetchFiles();
+    } catch (error) {
+      console.error("Failed to save file:", error);
+    }
   };
 
   const handleChat = async (message: string, history: Message[]) => {
     if (!projectId) return "Error: No project ID";
-    const response = await fetch(`${API_BASE}/api/projects/${projectId}/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, history }),
-    });
-    if (!response.ok) {
-      throw new Error("Failed to send message");
+    try {
+      const data = await ApiClient.chat(projectId, message, history);
+      fetchFiles();
+      return data.response;
+    } catch (error) {
+      console.error("Failed to send chat message:", error);
+      return "Error: Failed to send message";
     }
-    const data = await response.json();
-    fetchFiles();
-    return data.response;
   };
 
   const handleDeepReview = async () => {
@@ -208,21 +207,13 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     soundManager.playClick();
     
     try {
-        const response = await fetch(`${API_BASE}/api/projects/${projectId}/review`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ paths: [selectedFile] }),
-        });
+        const result = await ApiClient.review(projectId, [selectedFile]);
+        soundManager.playSuccess();
         
-        if (response.ok) {
-            const result = await response.json();
-            soundManager.playSuccess();
-            
-            if (result.approved) {
-                alert(`✅ Code Approved!\n\nNo critical issues found.`);
-            } else {
-                alert(`⚠️ Review Comments:\n\n${result.comments.join('\n\n')}`);
-            }
+        if (result.approved) {
+            alert(`✅ Code Approved!\n\nNo critical issues found.`);
+        } else {
+            alert(`⚠️ Review Comments:\n\n${result.comments.join('\n\n')}`);
         }
     } catch (e) {
         console.error(e);

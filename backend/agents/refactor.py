@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from datetime import datetime, timezone
@@ -11,7 +12,7 @@ from backend.core.event_bus import emit_event
 from backend.llm.adapter import get_llm_adapter
 from backend.memory import utils as db_utils
 from backend.memory.db import get_session
-from backend.memory.vector_store import get_project_memory, get_semantic_cache
+from backend.memory.vector_store import get_project_memory
 from backend.settings import get_settings
 from backend.utils.fileutils import write_files, iter_file_entries, read_project_file
 from backend.utils.json_parser import clean_and_parse_json
@@ -21,9 +22,16 @@ LOGGER = get_logger(__name__)
 
 class RefactorAgent:
 
-    def __init__(self) -> None:
-        self._adapter = get_llm_adapter()
+    def __init__(self, semaphore: Optional[asyncio.Semaphore] = None) -> None:
+        self._adapter = None
         self._settings = get_settings()
+        self._semaphore = semaphore or asyncio.Semaphore(1)
+    
+    @property
+    def adapter(self):
+        if self._adapter is None:
+            self._adapter = get_llm_adapter()
+        return self._adapter
 
     async def _broadcast_thought(self, project_id: str, msg: str, level: str = "info"):
         # Don't await - fire and forget to avoid blocking
@@ -44,16 +52,33 @@ class RefactorAgent:
         context_files = self._read_context_files(project_path, user_query=message)
         await self._broadcast_thought(str(project_id), "Reading relevant files...")
         
-        # 🧠 Получаем релевантный контекст из долгосрочной памяти
+        # 🧠 Получаем релевантный контекст из долгосрочной памяти (с ограничениями)
         memory_context = ""
-        try:
-            memory = get_project_memory(str(project_id))
-            memory_context = memory.get_relevant_context(message, max_chars=1500)
-            if memory_context:
-                await self._broadcast_thought(str(project_id), "🧠 Found relevant context in memory")
-        except Exception as e:
-            LOGGER.warning("Failed to load memory context in refactor: %s", e)
-            # Продолжаем без памяти
+        if getattr(self._settings, "enable_memory_search", True):
+            try:
+                memory = get_project_memory(str(project_id))
+                max_results = getattr(self._settings, "memory_search_max_results", 2)
+                max_chars = getattr(self._settings, "memory_search_max_chars", 1000)
+                
+                results = memory.search(message, n_results=max_results)
+                if results:
+                    context_parts = []
+                    total_chars = 0
+                    for r in results[:max_results]:
+                        content = r.get("content", "")
+                        if total_chars + len(content) > max_chars:
+                            remaining = max_chars - total_chars
+                            if remaining > 100:
+                                context_parts.append(content[:remaining] + "...")
+                            break
+                        context_parts.append(content)
+                        total_chars += len(content)
+                    
+                    if context_parts:
+                        memory_context = "\n\n---\n\n".join(context_parts)
+                        await self._broadcast_thought(str(project_id), "🧠 Found relevant context in memory")
+            except Exception as e:
+                LOGGER.warning("Failed to load memory context in refactor: %s", e)
         
         prompt = self._build_chat_prompt(message, context_files, history or [], intent, memory_context)
 
@@ -85,7 +110,8 @@ class RefactorAgent:
         for attempt in range(max_retries):
             try:
                 # Use native JSON mode if available
-                response = await self._adapter.acomplete(prompt, json_mode=True)
+                async with self._semaphore:
+                    response = await self.adapter.acomplete(prompt, json_mode=True)
                 
                 LOGGER.info("RefactorAgent attempt %d: raw response length: %d", attempt + 1, len(response))
                 LOGGER.info("RefactorAgent raw response start: %s", response[:500])

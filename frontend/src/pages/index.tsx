@@ -1,15 +1,11 @@
 import { FormEvent, useState, useEffect } from "react";
 import Link from "next/link";
 import { soundManager } from "../utils/sound";
+import { ApiClient } from "../utils/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
 const templates = [
-  {
-    title: "3D Snake Game",
-    description: "A classic Snake game built with Three.js and React. It should feature a 3D grid, a snake that grows when eating food, and score tracking.",
-    target: "web"
-  },
   {
     title: "FastAPI Backend",
     description: "A robust REST API using FastAPI with SQLite database, Pydantic schemas, and JWT authentication.",
@@ -138,11 +134,8 @@ export default function HomePage() {
 
   const fetchProjects = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/projects?limit=20`);
-      if (response.ok) {
-        const data = await response.json();
-        setProjects(data.projects || []);
-      }
+      const data = await ApiClient.getProjects(20);
+      setProjects(data.projects || []);
     } catch (e) {
       console.error("Failed to fetch projects:", e);
     }
@@ -150,11 +143,8 @@ export default function HomePage() {
 
   const fetchDocuments = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/documents?limit=20`);
-      if (response.ok) {
-        const data = await response.json();
-        setDocuments(data.documents || []);
-      }
+      const data = await ApiClient.getDocuments(20);
+      setDocuments(data.documents || []);
     } catch (e) {
       console.error("Failed to fetch documents:", e);
     }
@@ -162,11 +152,8 @@ export default function HomePage() {
 
   const fetchPresets = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/presets`);
-      if (response.ok) {
-        const data = await response.json();
-        setPresets(data.presets || []);
-      }
+      const data = await ApiClient.getPresets();
+      setPresets(data.presets || []);
     } catch (e) {
       console.error("Failed to fetch presets:", e);
     }
@@ -174,11 +161,8 @@ export default function HomePage() {
 
   const fetchCustomAgents = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/custom-agents?limit=100`);
-      if (response.ok) {
-        const data = await response.json();
-        setCustomAgents(data.agents || []);
-      }
+      const data = await ApiClient.getCustomAgents(100);
+      setCustomAgents(data.agents || []);
     } catch (e) {
       console.error("Failed to fetch custom agents:", e);
     }
@@ -186,11 +170,8 @@ export default function HomePage() {
 
   const fetchTeams = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/teams?limit=100`);
-      if (response.ok) {
-        const data = await response.json();
-        setTeams(data.teams || []);
-      }
+      const data = await ApiClient.getTeams(100);
+      setTeams(data.teams || []);
     } catch (e) {
       console.error("Failed to fetch teams:", e);
     }
@@ -222,41 +203,32 @@ export default function HomePage() {
     soundManager.playClick();
     
     try {
-      const response =
-        entityMode === "projects"
-          ? await fetch(`${API_BASE}/api/projects`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                title,
-                description,
-                target,
-                agent_preset: agentPreset || null,
-                custom_agent_id: customAgentId || null,
-                team_id: teamId || null,
-              }),
-            })
-          : await fetch(`${API_BASE}/api/documents`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                title,
-                description,
-                doc_type: docType,
-                agent_preset: agentPreset || null,
-                custom_agent_id: customAgentId || null,
-                team_id: teamId || null,
-              }),
-            });
-      if (!response.ok) {
-        setError("Failed to create project");
-        return;
+      let data;
+      if (entityMode === "projects") {
+        const res = await ApiClient.createProject({
+          title,
+          description,
+          target,
+          agent_preset: agentPreset || null,
+          custom_agent_id: customAgentId || null,
+          team_id: teamId || null,
+        });
+        setProjectId(res.project_id);
+      } else {
+        const res = await ApiClient.createDocument({
+          title,
+          description,
+          doc_type: docType,
+          agent_preset: agentPreset || null,
+          custom_agent_id: customAgentId || null,
+          team_id: teamId || null,
+        });
+        setProjectId(res.document_id);
       }
-      const data = await response.json();
-      setProjectId(data.project_id || data.document_id);
       soundManager.playSuccess();
     } catch (e) {
-      setError("Failed to create project");
+      const errorMessage = e instanceof Error ? e.message : "Failed to create project";
+      setError(errorMessage);
     } finally {
       setCreating(false);
     }
@@ -271,17 +243,7 @@ export default function HomePage() {
         .filter(Boolean)
         .slice(0, 50);
 
-      const response = await fetch(`${API_BASE}/api/custom-agents`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newAgentName, prompt: newAgentPrompt, tech_stack }),
-      });
-
-      if (!response.ok) {
-        const t = await response.text();
-        setError(`Failed to create custom agent: ${t.slice(0, 200)}`);
-        return;
-      }
+      await ApiClient.createCustomAgent({ name: newAgentName, prompt: newAgentPrompt, tech_stack });
 
       setNewAgentName("");
       setNewAgentTech("");
@@ -296,11 +258,7 @@ export default function HomePage() {
   const deleteCustomAgent = async (id: string) => {
     if (!confirm("Delete this custom agent?")) return;
     try {
-      const response = await fetch(`${API_BASE}/api/custom-agents/${id}`, { method: "DELETE" });
-      if (!response.ok) {
-        alert("Failed to delete custom agent");
-        return;
-      }
+      await ApiClient.deleteCustomAgent(id);
       if (customAgentId === id) setCustomAgentId("");
       setNewTeamAgentIds(prev => prev.filter(a => a !== id));
       await fetchCustomAgents();
@@ -313,21 +271,13 @@ export default function HomePage() {
   const createTeam = async () => {
     setError(null);
     try {
-      const response = await fetch(`${API_BASE}/api/teams`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: newTeamName,
-          description: newTeamDesc,
-          agent_ids: newTeamAgentIds,
-          preset_ids: newTeamPresetIds,
-        }),
+      await ApiClient.createTeam({
+        name: newTeamName,
+        description: newTeamDesc,
+        agent_ids: newTeamAgentIds,
+        preset_ids: newTeamPresetIds,
       });
-      if (!response.ok) {
-        const t = await response.text();
-        setError(`Failed to create team: ${t.slice(0, 200)}`);
-        return;
-      }
+
       setNewTeamName("");
       setNewTeamDesc("");
       setNewTeamAgentIds([]);
@@ -342,11 +292,7 @@ export default function HomePage() {
   const deleteTeam = async (id: string) => {
     if (!confirm("Delete this team?")) return;
     try {
-      const response = await fetch(`${API_BASE}/api/teams/${id}`, { method: "DELETE" });
-      if (!response.ok) {
-        alert("Failed to delete team");
-        return;
-      }
+      await ApiClient.deleteTeam(id);
       if (teamId === id) setTeamId("");
       await fetchTeams();
     } catch (e) {
@@ -372,17 +318,10 @@ export default function HomePage() {
     soundManager.playClick();
     
     try {
-      const response = await fetch(`${API_BASE}/api/projects/${projectId}`, {
-        method: "DELETE",
-      });
-      
-      if (response.ok) {
-        soundManager.playSuccess();
-        // Remove from local state
-        setProjects(prev => prev.filter(p => p.id !== projectId));
-      } else {
-        alert("Failed to delete project");
-      }
+      await ApiClient.deleteProject(projectId);
+      soundManager.playSuccess();
+      // Remove from local state
+      setProjects(prev => prev.filter(p => p.id !== projectId));
     } catch (e) {
       alert(`Error: ${e}`);
     }

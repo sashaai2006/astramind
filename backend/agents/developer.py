@@ -11,7 +11,7 @@ from backend.core.event_bus import emit_event
 from backend.llm.adapter import get_llm_adapter
 from backend.memory import utils as db_utils
 from backend.memory.db import get_session
-from backend.memory.vector_store import get_project_memory, get_semantic_cache
+from backend.memory.vector_store import get_project_memory
 from backend.memory.knowledge_sources import get_knowledge_registry
 from backend.settings import get_settings
 from backend.utils.fileutils import write_files_async
@@ -21,21 +21,18 @@ from backend.utils.path_normalizer import normalize_artifact_path
 
 LOGGER = get_logger(__name__)
 
-# Глобальный семантический кэш
-_semantic_cache = None
-
-def _get_cache():
-    global _semantic_cache
-    if _semantic_cache is None:
-        _semantic_cache = get_semantic_cache()
-    return _semantic_cache
-
 class DeveloperAgent:
 
     def __init__(self, llm_semaphore) -> None:
-        self._adapter = get_llm_adapter()
+        self._adapter = None
         self._settings = get_settings()
         self._semaphore = llm_semaphore
+    
+    @property
+    def adapter(self):
+        if self._adapter is None:
+            self._adapter = get_llm_adapter()
+        return self._adapter
 
     async def _broadcast_thought(self, project_id: str, msg: str, level: str = "info", agent: str = "developer"):
         # Keep "thoughts" WS-only to avoid DB write amplification
@@ -62,23 +59,28 @@ class DeveloperAgent:
         await self._broadcast_thought(project_id, "Generating high-quality code...")
 
         # Generate each file independently to avoid output token limits
-        # Add timeout per file (120s max) to prevent hanging on rate limits
+        # Add timeout per file (600s max) to prevent hanging on rate limits
         async def _generate_with_timeout(spec: Dict[str, Any]) -> Any:
             path_hint = normalize_artifact_path(spec.get("path", "unknown"))
             try:
                 return await asyncio.wait_for(
                     self._generate_single_file(spec, context, step, stop_event),
-                    timeout=120.0
+                    timeout=600.0
                 )
             except asyncio.TimeoutError:
-                LOGGER.error("Timeout generating %s (exceeded 120s)", path_hint)
-                raise RuntimeError(f"Timeout generating {path_hint} (exceeded 120s)")
+                LOGGER.error("Timeout generating %s (exceeded 600s)", path_hint)
+                raise RuntimeError(f"Timeout generating {path_hint} (exceeded 600s)")
 
-        tasks = [
-            _generate_with_timeout(spec)
-            for spec in files_spec
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Generate files one by one to be less aggressive with API limits
+        results = []
+        for spec in files_spec:
+            if stop_event.is_set():
+                break
+            try:
+                result = await _generate_with_timeout(spec)
+                results.append(result)
+            except Exception as e:
+                results.append(e)
 
         file_defs: List[Dict[str, str]] = []
         had_errors = False
@@ -90,7 +92,7 @@ class DeveloperAgent:
                 if "RateLimitError" in error_msg or "rate limit" in error_msg.lower():
                     error_msg = "Rate limit exceeded. Please wait a moment and try again."
                 elif "Timeout" in error_msg:
-                    error_msg = f"Timeout generating {path_value} (took >120s)"
+                    error_msg = f"Timeout generating {path_value} (took >600s)"
                 
                 LOGGER.error("DeveloperAgent error for %s: %s", path_value, result, exc_info=True)
                 await self._broadcast_thought(
@@ -113,7 +115,7 @@ class DeveloperAgent:
             await self._broadcast_thought(project_id, f"Running quality check on {len(critical_files)} critical file(s)...")
             try:
                 from backend.agents.reviewer import ReviewerAgent
-                reviewer = ReviewerAgent()  # No args needed
+                reviewer = ReviewerAgent(self._semaphore)
                 task_desc = f"{context['title']}: {step_name}"
                 review_result = await reviewer.review(task_desc, critical_files)
                 
@@ -126,6 +128,11 @@ class DeveloperAgent:
             except Exception as e:
                 LOGGER.warning("Auto-review failed (non-critical): %s", e)
 
+        LOGGER.info("About to save %d files for project %s", len(file_defs), project_id)
+        if not file_defs:
+            LOGGER.error("No files to save for step %s in project %s", step_name, project_id)
+            raise RuntimeError(f"No files generated for step {step_name}")
+        
         await self._save_files(project_id, step, file_defs)
         
         if on_message:
@@ -154,10 +161,18 @@ class DeveloperAgent:
         ]
         
         for issue in issues:
-            issue_lower = issue.lower()
+            if not issue:
+                continue
+            # Handle both string and dict issues from TesterAgent
+            if isinstance(issue, dict):
+                issue_text = str(issue.get("description") or issue.get("type") or str(issue))
+            else:
+                issue_text = str(issue)
+            
+            issue_lower = issue_text.lower()
             # Only include issues that are likely fixable and critical
             if not any(pattern in issue_lower for pattern in ignored_patterns):
-                critical_issues.append(issue)
+                critical_issues.append(issue_text)
         
         if not critical_issues:
             await self._broadcast_thought(
@@ -364,16 +379,24 @@ class DeveloperAgent:
         project_path.mkdir(parents=True, exist_ok=True)
         project_root = project_path.resolve()
         
+        LOGGER.info("_save_files: project_id=%s, project_path=%s, files_count=%d", project_id, project_path, len(file_defs))
+        
         await self._broadcast_thought(project_id, f"Writing {len(file_defs)} files to disk...")
         
-        # Normalize paths (no .txt) before writing
         normalized_defs: List[Dict[str, str]] = [
             {"path": normalize_artifact_path(f.get("path", "")), "content": f.get("content", "")}
             for f in file_defs
         ]
         
-        # Use async write
+        LOGGER.info("Normalized file paths: %s", [f.get("path") for f in normalized_defs[:5]])
+        
         saved = await write_files_async(project_path, normalized_defs)
+        
+        if not saved:
+            LOGGER.error("write_files_async returned None or empty list for project %s", project_id)
+            raise RuntimeError("Failed to save files: write_files_async returned None")
+        
+        LOGGER.info("Files saved successfully: %d files to %s", len(saved), project_path)
         
         # Helper to get size async
         def get_file_info(path: Path, root: Path):
@@ -444,27 +467,37 @@ class DeveloperAgent:
             txt = (str(exc) or "").lower()
             return ("rate limit" in txt) or ("ratelimit" in txt) or ("RateLimitError" in repr(exc))
         
-        # Get tech_stack for cache key
-        tech_stack = context.get("tech_stack") or step.get("payload", {}).get("tech_stack", "")
-        
-        # 1. SEMANTIC CACHE - DISABLED BY USER REQUEST
-        # cache = _get_cache()
-        # cache_filter = {"tech_stack": tech_stack} if tech_stack else None
-        # ... (cache logic removed to prevent stale responses)
-        
-        # 2. Добавляем контекст из долгосрочной памяти (с обработкой ошибок)
-        try:
-            memory = get_project_memory(project_id)
-            relevant_context = memory.get_relevant_context(
-                f"{context.get('title', '')} {step.get('name', '')}",
-                max_chars=2000
-            )
-            if relevant_context:
-                current_prompt = f"{prompt}\n\n--- RELEVANT CONTEXT FROM MEMORY ---\n{relevant_context}"
-                await self._broadcast_thought(project_id, "🧠 Found relevant context in memory", "info")
-        except Exception as e:
-            LOGGER.warning("Failed to load memory context: %s", e)
-            # Продолжаем без памяти
+        # Добавляем контекст из долгосрочной памяти (с обработкой ошибок и ограничениями)
+        if getattr(self._settings, "enable_memory_search", True):
+            try:
+                memory = get_project_memory(project_id)
+                max_results = getattr(self._settings, "memory_search_max_results", 2)
+                max_chars = getattr(self._settings, "memory_search_max_chars", 1000)
+                
+                results = memory.search(
+                    f"{context.get('title', '')} {step.get('name', '')}",
+                    n_results=max_results
+                )
+                
+                if results:
+                    context_parts = []
+                    total_chars = 0
+                    for r in results[:max_results]:
+                        content = r.get("content", "")
+                        if total_chars + len(content) > max_chars:
+                            remaining = max_chars - total_chars
+                            if remaining > 100:
+                                context_parts.append(content[:remaining] + "...")
+                            break
+                        context_parts.append(content)
+                        total_chars += len(content)
+                    
+                    if context_parts:
+                        relevant_context = "\n\n---\n\n".join(context_parts)
+                        current_prompt = f"{prompt}\n\n--- RELEVANT CONTEXT FROM MEMORY ---\n{relevant_context}"
+                        await self._broadcast_thought(project_id, "🧠 Found relevant context in memory", "info")
+            except Exception as e:
+                LOGGER.warning("Failed to load memory context: %s", e)
         
         # 3. LLM Call with Retry Loop
         attempt = 0
@@ -485,7 +518,7 @@ class DeveloperAgent:
                 LOGGER.debug("Acquiring semaphore for LLM call...")
                 async with self._semaphore:
                     LOGGER.debug("Semaphore acquired, calling LLM adapter...")
-                    completion = await self._adapter.acomplete(current_prompt, json_mode=True)
+                    completion = await self.adapter.acomplete(current_prompt, json_mode=True)
                     LOGGER.debug("LLM adapter returned (length=%d)", len(completion or ""))
             except Exception as exc:
                 exc_name = exc.__class__.__name__
@@ -514,16 +547,34 @@ class DeveloperAgent:
             
             try:
                 parsed = clean_and_parse_json(completion)
+
+                # Try to normalize common valid-but-different JSON shapes returned by LLMs.
+                # Accept: {"file": {...}}, a single file dict with top-level 'path' and 'content',
+                # or other keys that contain a list of file-like dicts.
+                if isinstance(parsed, dict) and "files" not in parsed:
+                    normalized = False
+                    if "file" in parsed and isinstance(parsed["file"], dict):
+                        parsed = {"files": [parsed["file"]]}
+                        normalized = True
+                    elif ("path" in parsed and "content" in parsed) and isinstance(parsed.get("path"), str):
+                        # Top-level single file dict
+                        parsed = {"files": [parsed]}
+                        normalized = True
+                    else:
+                        # Search for any key containing a list of file-like dicts
+                        for k, v in list(parsed.items()):
+                            if isinstance(v, list) and v and isinstance(v[0], dict):
+                                first = v[0]
+                                if "path" in first and "content" in first:
+                                    parsed = {"files": v}
+                                    normalized = True
+                                    break
+                    if normalized:
+                        await self._broadcast_thought(project_id, "Normalized LLM JSON shape to include 'files' array", "info")
+
                 if isinstance(parsed, dict) and "files" in parsed:
                     if "_thought" in parsed:
                         await self._broadcast_thought(project_id, f"Developer thought: {parsed['_thought']}", "info")
-                    
-                    # Save to cache - DISABLED
-                    # try:
-                    #     cache_meta = {"tech_stack": tech_stack} if tech_stack else None
-                    #     cache.set(cache_key_prompt, completion, metadata=cache_meta)
-                    # except Exception as e:
-                    #     LOGGER.warning("Failed to cache response: %s", e)
                     
                     # Save decision to memory
                     try:
@@ -537,12 +588,33 @@ class DeveloperAgent:
                     
                     return parsed
                 elif isinstance(parsed, list):
-                    # cache.set(cache_key_prompt, completion) - DISABLED
                     return {"files": parsed}
                 else:
                     raise ValueError("JSON is valid but does not contain 'files' or is not a list")
             except Exception as exc:
-                LOGGER.warning("JSON parse failed on attempt %d: %s", attempt + 1, exc)
+                # Provide more context when parsing fails: include a short preview of the raw completion
+                # and a brief summary of the parsed object (type/keys) when available (safe, truncated).
+                completion_preview = (completion[:1000] + "...") if completion and len(completion) > 1000 else (completion or "<empty>")
+                parsed_summary = None
+                try:
+                    if 'parsed' in locals() and parsed is not None:
+                        if isinstance(parsed, dict):
+                            parsed_summary = f"dict keys={list(parsed.keys())[:10]}"
+                        elif isinstance(parsed, list):
+                            parsed_summary = f"list(len={len(parsed)})"
+                        else:
+                            parsed_summary = f"{type(parsed).__name__}"
+                except Exception:
+                    parsed_summary = None
+
+                LOGGER.warning(
+                    "JSON parse failed on attempt %d: %s (completion_preview=%s, parsed=%s)",
+                    attempt + 1,
+                    exc,
+                    completion_preview,
+                    parsed_summary,
+                )
+
                 if attempt < max_retries:
                     await self._broadcast_thought(project_id, "Received invalid JSON from LLM. Attempting auto-repair...", "warning")
                     # Keep original task context, then request a corrected JSON payload.
@@ -551,7 +623,10 @@ class DeveloperAgent:
                         + "\n\n=== IMPORTANT: YOUR PREVIOUS RESPONSE WAS INVALID JSON ===\n"
                         + f"Error: {exc}\n"
                         + "Return ONLY valid JSON with a top-level 'files' array.\n"
-                        + "Do NOT add any text before/after the JSON.\n"
+                        + "If you cannot produce any files, return {\"files\": []}.\n"
+                        + "Do NOT add any text before or after the JSON, and do NOT wrap it in markdown fences.\n"
+                        + "The JSON must be EXACTLY like this example (including keys):\n"
+                        + "{\"files\": [{\"path\": \"path/to/file.txt\", \"content\": \"...file content...\"}]}\n"
                         + "\n--- Previous (invalid) response ---\n"
                         + completion[:3000]
                     )

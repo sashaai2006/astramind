@@ -1,1 +1,0 @@
-{"class":"Score","methods":{"updateScore":function(score){this.score = score;},"displayScore":function(){return this.score;},"init":function(){this.score = 0;}}}
