@@ -1,121 +1,118 @@
 # AstraMind
 
-**Virtual AI Company: Describe your idea and let the agents build the MVP.**
+**Виртуальная AI-компания: Опишите идею, и агенты создадут MVP.**
 
 ---
 
-## 🎯 What is AstraMind?
+## 🎯 Что такое AstraMind?
 
-AstraMind is an AI-powered project management and autonomous development platform that transforms your ideas into working prototypes. Describe your project vision, and our team of intelligent AI agents will handle everything:
+AstraMind — это AI-платформа для управления проектами и автономной разработки, которая превращает ваши идеи в работающие прототипы. Просто опишите свою задумку, и наша команда интеллектуальных AI-агентов позаботится обо всём:
 
-- **Code Generation** - Write production-ready code
-- **Architecture Design** - Plan scalable system architecture  
-- **Testing & Quality** - Ensure code reliability
-- **Documentation** - Generate comprehensive docs
-- **Real-time Execution** - Watch agents work live
-
----
-
-## ✨ Key Features
-
-### 🤖 Intelligent AI Agents
-- **CEO Agent** - Project oversight and task orchestration
-- **Senior Python Developer** - Backend API development
-- **Senior C++ Developer** - System-level optimization
-- **DevOps Engineer** - Infrastructure and deployment
-- **Technical Writer** - Documentation generation
-
-### 🚀 Real-time Project Execution
-Watch the execution graph in real-time as agents collaborate and complete tasks. Each step is tracked with detailed logs.
-
-### 📊 Multi-LLM Support
-- Groq API (fast, free tier available)
-- OpenAI GPT models
-- DeepSeek (cost-effective)
-- Cerebras (high-performance)
-- Local Ollama support
-
-### 💾 Project Management
-- Create and manage multiple projects
-- Browse project gallery (20+ templates)
-- Track execution progress
-- Access generated code and documents
+- **Генерация кода** - Создание production-ready кода
+- **Проектирование архитектуры** - Планирование масштабируемых систем
+- **Тестирование и качество** - Обеспечение надёжности кода
+- **Документация** - Генерация полной документации
+- **Выполнение в реальном времени** - Наблюдайте за работой агентов live
 
 ---
 
-## 📸 Product Screenshots
+## ✨ Ключевые возможности
 
-### Dashboard Interface
+### 🤖 Интеллектуальные AI-агенты
+- **CEO Agent** - Управление проектом и оркестрация задач
+- **Senior Python Developer** - Разработка backend API
+- **Senior C++ Developer** - Системная оптимизация
+- **DevOps Engineer** - Инфраструктура и развертывание
+- **Technical Writer** - Генерация документации
+- **LaTeX Writer** - Академическая документация
+- **ГОСТ-Документатор** - Документация по ГОСТу
 
-![AstraMind Dashboard](./screenshots/dashboard-main.png)
+### 🚀 Выполнение проекта в реальном времени
+Наблюдайте за графом выполнения в реальном времени, как агенты сотрудничают и завершают задачи. Каждый шаг отслеживается с подробными логами.
 
-*The main dashboard showing available projects and quick-start templates*
+### 📊 Поддержка нескольких LLM
+- Groq API (быстро, есть бесплатный тариф)
+- OpenAI GPT модели
+- DeepSeek (экономичный)
+- Cerebras (высокопроизводительный)
+- Поддержка локального Ollama
+- GitHub Copilot
 
-### Project Creation & Configuration
-
-![Project Configuration](./screenshots/project-setup.png)
-
-*Easy project setup with customizable agents and tech stack selection*
-
-### Real-time Execution Graph
-
-![Execution Graph](./screenshots/execution-graph.png)
-
-*Watch AI agents collaborate in real-time with detailed task tracking*
-
-### Agent Marketplace
-
-![Agent Marketplace](./screenshots/agent-marketplace.png)
-
-*Browse and select from 9+ pre-built agents for your project*
-
-### Code Editor Integration
-
-![Code Editor](./screenshots/code-editor.png)
-
-*View and edit generated code with syntax highlighting*
-
-### Generated Results
-
-![Generated Results](./screenshots/results.png)
-
-*Access all generated files, documentation, and artifacts*
+### 💾 Управление проектами
+- Создание и управление несколькими проектами
+- Галерея проектов (20+ шаблонов)
+- Отслеживание прогресса выполнения
+- Доступ к сгенерированному коду и документам
 
 ---
 
-## 🚀 Quick Start
+## 📸 Скриншоты продукта
 
-### Prerequisites
+### Главная панель проекта
+
+![AstraMind Dashboard](./screenshots/telegram-cloud-photo-size-2-5348400496449884183-y.jpg)
+
+*Главная страница с доступными проектами и шаблонами для быстрого старта*
+
+### Создание и настройка проекта
+
+![Настройка проекта](./screenshots/telegram-cloud-photo-size-2-5348400496449884185-y.jpg)
+
+*Простая настройка проекта с выбором агентов и технологического стека*
+
+### Граф выполнения в реальном времени
+
+![Граф выполнения](./screenshots/telegram-cloud-photo-size-2-5348400496449884892-y.jpg)
+
+*Наблюдайте за сотрудничеством AI-агентов в реальном времени с детальным отслеживанием задач*
+
+### Маркетплейс агентов
+
+![Маркетплейс агентов](./screenshots/telegram-cloud-photo-size-2-5348400496449884299-y.jpg)
+
+*Выбирайте из 9+ предустановленных агентов для вашего проекта*
+
+### Интеграция редактора кода
+
+![Редактор кода](./screenshots/telegram-cloud-photo-size-2-5348400496449884823-y.jpg)
+
+*Просматривайте и редактируйте сгенерированный код с подсветкой синтаксиса*
+
+---
+
+## 🚀 Быстрый старт
+
+### Требования
 - Python 3.11+
 - Node.js 18+
-- Docker & Docker Compose (optional)
+- Docker & Docker Compose (опционально)
 
-### Local Development
+### Локальная разработка
 
-1. **Clone and install dependencies:**
+1. **Клонирование и установка зависимостей:**
    ```bash
    git clone https://github.com/sashaai2006/AstraMind.git
    cd AstraMind
    make init
    ```
 
-2. **Set up environment:**
+2. **Настройка окружения:**
    ```bash
    cp .env.example .env
-   # Add your LLM API keys to .env
+   # Добавьте ваши API-ключи LLM в .env
    ```
 
-3. **Run the application:**
+3. **Запуск приложения:**
    ```bash
    make dev
    ```
 
-4. **Access the app:**
+4. **Доступ к приложению:**
    - Frontend: http://localhost:3000
    - Backend API: http://localhost:8000
-   - API Docs: http://localhost:8000/docs
+   - API документация: http://localhost:8000/docs
 
-### Docker Setup
+### Запуск через Docker
 
 ```bash
 docker-compose up --build
@@ -123,120 +120,121 @@ docker-compose up --build
 
 ---
 
-## 📁 Project Structure
+## 📁 Структура проекта
 
 ```
 AstraMind/
 ├── backend/              # FastAPI backend
-│   ├── agents/          # AI agents implementation
+│   ├── agents/          # Реализация AI-агентов
 │   ├── api/             # REST API endpoints
-│   ├── core/            # Orchestration engine
-│   ├── llm/             # LLM adapters (Groq, OpenAI, etc.)
-│   ├── memory/          # Database & vector storage
-│   └── sandbox/         # Code execution sandbox
-├── frontend/            # Next.js web application
+│   ├── core/            # Движок оркестрации
+│   ├── llm/             # LLM адаптеры (Groq, OpenAI и др.)
+│   ├── memory/          # База данных и векторное хранилище
+│   └── sandbox/         # Песочница для выполнения кода
+├── frontend/            # Next.js веб-приложение
 │   └── src/
-│       ├── components/  # React components
-│       ├── contexts/    # React state management
-│       └── pages/       # Application pages
-└── docker-compose.yml   # Container orchestration
+│       ├── components/  # React компоненты
+│       ├── contexts/    # Управление состоянием React
+│       └── pages/       # Страницы приложения
+└── docker-compose.yml   # Оркестрация контейнеров
 ```
 
 ---
 
-## ⚙️ Configuration
+## ⚙️ Конфигурация
 
-Create `.env` file with the following:
+Создайте файл `.env` со следующим содержимым:
 
 ```env
-# LLM Selection (choose one)
+# Выбор LLM (выберите один)
 LLM_MODE=groq
 
-# API Keys (based on LLM_MODE)
-GROQ_API_KEY=your_api_key_here
-OPENAI_API_KEY=your_openai_key
-DEEPSEEK_API_KEY=your_deepseek_key
-CEREBRAS_API_KEY=your_cerebras_key
+# API ключи (в зависимости от LLM_MODE)
+GROQ_API_KEY=ваш_api_ключ
+OPENAI_API_KEY=ваш_openai_ключ
+DEEPSEEK_API_KEY=ваш_deepseek_ключ
+CEREBRAS_API_KEY=ваш_cerebras_ключ
+GITHUB_TOKEN=ваш_github_токен
 
-# Optional Settings
+# Опциональные настройки
 ENABLE_WEB_SEARCH=false
-ADMIN_API_KEY=your_admin_key
+ADMIN_API_KEY=ваш_admin_ключ
 ```
 
 ---
 
-## 🎓 How It Works
+## 🎓 Как это работает
 
-1. **Describe Your Idea** - Write a project description with tech requirements
-2. **Select Agents** - Choose which AI agents to work on your project
-3. **Launch Project** - System starts autonomous development
-4. **Monitor Progress** - Watch real-time execution graph and logs
-5. **Get Results** - Download generated code, docs, and artifacts
+1. **Опишите вашу идею** - Напишите описание проекта с техническими требованиями
+2. **Выберите агентов** - Выберите, какие AI-агенты будут работать над проектом
+3. **Запустите проект** - Система начнёт автономную разработку
+4. **Следите за прогрессом** - Наблюдайте за графом выполнения и логами в реальном времени
+5. **Получите результаты** - Скачайте сгенерированный код, документацию и артефакты
 
 ---
 
-## 🧪 Testing
+## 🧪 Тестирование
 
 ```bash
 make test
-# or
+# или
 pytest
 ```
 
 ---
 
-## 🔧 Troubleshooting
+## 🔧 Устранение неполадок
 
-| Issue | Solution |
-|-------|----------|
-| **Port already in use** | Change ports in `run_dev.py` or kill process on port 3000/8000 |
-| **Database locked** | Restart Docker containers or close other database connections |
-| **ModuleNotFoundError** | Run `pip install -r requirements.txt` in activated venv |
-| **Frontend can't reach API** | Check `NEXT_PUBLIC_API_BASE_URL` env variable |
-| **Missing API keys** | Set LLM API keys in `.env` file |
+| Проблема | Решение |
+|----------|----------|
+| **Порт уже используется** | Измените порты в `run_dev.py` или завершите процесс на портах 3000/8000 |
+| **База данных заблокирована** | Перезапустите Docker контейнеры или закройте другие подключения к БД |
+| **ModuleNotFoundError** | Выполните `pip install -r requirements.txt` в активированном venv |
+| **Frontend не может достучаться до API** | Проверьте переменную окружения `NEXT_PUBLIC_API_BASE_URL` |
+| **Отсутствуют API ключи** | Установите LLM API ключи в файле `.env` |
 
 ---
 
-## 📊 Technology Stack
+## 📊 Технологический стек
 
 ### Backend
-- **Framework**: FastAPI (async, high-performance)
+- **Фреймворк**: FastAPI (асинхронный, высокопроизводительный)
 - **ORM**: SQLModel (SQLAlchemy + Pydantic)
-- **LLM Integration**: LangChain, LiteLLM
-- **Code Execution**: Custom sandbox with timeout protection
-- **Database**: SQLite (local), PostgreSQL (production-ready)
+- **Интеграция LLM**: LangChain, LiteLLM
+- **Выполнение кода**: Кастомная песочница с защитой от timeout
+- **База данных**: SQLite (локально), PostgreSQL (production-ready)
 
 ### Frontend
-- **Framework**: Next.js 14+ (React, TypeScript)
-- **Styling**: Tailwind CSS
-- **Real-time Updates**: Server-Sent Events (SSE)
-- **State Management**: React Context API
+- **Фреймворк**: Next.js 14+ (React, TypeScript)
+- **Стилизация**: Tailwind CSS
+- **Обновления в реальном времени**: Server-Sent Events (SSE)
+- **Управление состоянием**: React Context API
 
-### Infrastructure
-- **Containerization**: Docker & Docker Compose
-- **Deployment**: Cloud-ready configuration
-- **Scaling**: Horizontal scaling support
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please follow the existing code style and submit pull requests with detailed descriptions.
+### Инфраструктура
+- **Контейнеризация**: Docker & Docker Compose
+- **Развертывание**: Cloud-ready конфигурация
+- **Масштабирование**: Поддержка горизонтального масштабирования
 
 ---
 
-## 📄 License
+## 🤝 Вклад в проект
 
-[Choose your license here]
+Вклад приветствуется! Пожалуйста, следуйте существующему стилю кода и отправляйте pull request с подробным описанием.
 
 ---
 
-## 🌐 Links
+## 📄 Лицензия
+
+MIT License
+
+---
+
+## 🌐 Ссылки
 
 - **GitHub**: [sashaai2006/AstraMind](https://github.com/sashaai2006/AstraMind)
-- **Issues**: [Report bugs and request features](https://github.com/sashaai2006/AstraMind/issues)
-- **Discussions**: [Join the community](https://github.com/sashaai2006/AstraMind/discussions)
+- **Баги и запросы**: [Сообщить о проблеме](https://github.com/sashaai2006/AstraMind/issues)
+- **Обсуждения**: [Присоединиться к сообществу](https://github.com/sashaai2006/AstraMind/discussions)
 
 ---
 
-**Built with ❤️ for autonomous AI-powered development**
+**Создано с ❤️ для автономной AI-разработки**
