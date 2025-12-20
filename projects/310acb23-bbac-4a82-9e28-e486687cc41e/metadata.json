@@ -1,0 +1,5 @@
+{
+  "title": "FastAPI Backend",
+  "description": "A robust REST API using FastAPI with SQLite database, Pydantic schemas, and JWT authentication.",
+  "target": "api"
+}

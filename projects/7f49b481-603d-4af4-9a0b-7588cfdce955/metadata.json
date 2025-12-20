@@ -1,0 +1,5 @@
+{
+  "title": "test-proj-watchtest",
+  "description": "watchfiles test",
+  "target": "api"
+}

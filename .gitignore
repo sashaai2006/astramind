@@ -18,7 +18,7 @@ data/
 # Secrets
 .env
 .env.*
-
+.venv
 # Backups
 *.original
 *_fixed.py

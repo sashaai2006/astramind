@@ -202,3 +202,4 @@ pip install -r requirements.txt
 
 ### Проблема: Frontend не подключается к Backend
 **Решение**: Проверьте переменную окружения `NEXT_PUBLIC_API_BASE_URL` и убедитесь, что backend запущен на порту 8000.
+# AstraMind

@@ -1,4 +1,0 @@
--r backend/requirements-backend.txt
-pytest
-requests-mock
-
