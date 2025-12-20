@@ -25,7 +25,10 @@ class DeepSeekAdapter(BaseLLMAdapter):
     def __init__(self, model: str = "deepseek-chat"):
         api_key = os.getenv("DEEPSEEK_API_KEY")
         if not api_key:
-            LOGGER.warning("DEEPSEEK_API_KEY not found. DeepSeek adapter will fail.")
+            raise ValueError(
+                "DEEPSEEK_API_KEY environment variable is required for DeepSeek adapter. "
+                "Get your API key at https://platform.deepseek.com/api_keys"
+            )
         
         # DeepSeek uses OpenAI-compatible API
         self.client = AsyncOpenAI(
@@ -103,4 +106,3 @@ class DeepSeekAdapter(BaseLLMAdapter):
         content = choice.message.content
         LOGGER.info("DeepSeek response received (length=%d)", len(content or ""))
         return content or ""
-
