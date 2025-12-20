@@ -21,18 +21,27 @@ def iter_file_entries(project_path: Path) -> List[FileEntry]:
         logger.warning("iter_file_entries: project_path does not exist: %s", project_path)
         return entries
     
+    # Files and directories to ignore
+    IGNORE_DIRS = {'__pycache__', '.git', '.svn', '.hg', 'node_modules', '.venv', 'venv', '.idea', '.vscode'}
+    IGNORE_EXTENSIONS = {'.pyc', '.pyo', '.pyd', '.so', '.dll', '.dylib', '.class'}
+    
     logger.debug("iter_file_entries: scanning %s", project_path)
     for root, dirs, files in os.walk(project_path):
+        # Filter out ignored directories in-place
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS and not d.startswith('.')]
+        
         root_path = Path(root)
         rel_root = root_path.relative_to(project_path)
         
         for d in dirs:
-            if d.startswith('.'):
-                continue
             entries.append(FileEntry(str(rel_root / d), is_dir=True))
         
         for f in files:
             if f.startswith('.'):
+                continue
+            # Skip binary/compiled files
+            file_ext = Path(f).suffix
+            if file_ext in IGNORE_EXTENSIONS:
                 continue
             entries.append(FileEntry(str(rel_root / f), is_dir=False))
     
@@ -107,3 +116,21 @@ async def write_files_async(project_path: Path, files: List[Dict[str, str]]) -> 
     """Write multiple files to a project directory asynchronously."""
     return await asyncio.to_thread(write_files, project_path, files)
 
+def build_project_zip(project_path: Path) -> Path:
+    """Build a zip archive of the project."""
+    import zipfile
+    from backend.utils.logging import get_logger
+    logger = get_logger(__name__)
+    
+    zip_path = project_path.parent / f"{project_path.name}.zip"
+    
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for entry in iter_file_entries(project_path):
+            if entry.is_dir:
+                continue
+            file_path = project_path / entry.path
+            if file_path.exists():
+                zipf.write(file_path, entry.path)
+    
+    logger.info("Created zip archive: %s", zip_path)
+    return zip_path
