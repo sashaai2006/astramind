@@ -1,206 +1,242 @@
 # AstraMind
 
-AI-powered project management and document generation system.
+**Virtual AI Company: Describe your idea and let the agents build the MVP.**
 
-## 🔍 Найденные проблемы и исправления
+---
 
-### ✅ Исправленные проблемы:
+## 🎯 What is AstraMind?
 
-1. **Отсутствующий файл `run_dev.py`**
-   - **Проблема**: Файл упоминался в `Dockerfile.backend` и `Makefile`, но не существовал
-   - **Исправление**: Создан файл `run_dev.py` для запуска backend и frontend в режиме разработки
+AstraMind is an AI-powered project management and autonomous development platform that transforms your ideas into working prototypes. Describe your project vision, and our team of intelligent AI agents will handle everything:
 
-2. **Проблема с путём к базе данных в Docker**
-   - **Проблема**: База данных создавалась в `/app/backend/data.db`, но volume маппится на `/app/data`
-   - **Исправление**: Добавлена поддержка переменной окружения `DATA_DIR` для корректной работы в Docker
+- **Code Generation** - Write production-ready code
+- **Architecture Design** - Plan scalable system architecture  
+- **Testing & Quality** - Ensure code reliability
+- **Documentation** - Generate comprehensive docs
+- **Real-time Execution** - Watch agents work live
 
-3. **Ненужный файл в Docker образе**
-   - **Проблема**: `run_dev.py` копировался в Docker образ, хотя нужен только для локальной разработки
-   - **Исправление**: Удалена строка копирования `run_dev.py` из Dockerfile
+---
 
-### ⚠️ Потенциальные проблемы (требуют внимания):
+## ✨ Key Features
 
-1. **SQLAlchemy не указан явно в requirements**
-   - SQLModel включает SQLAlchemy как зависимость, но для явности можно добавить `sqlalchemy>=2.0.0`
-   - **Статус**: Не критично, но рекомендуется для ясности
+### 🤖 Intelligent AI Agents
+- **CEO Agent** - Project oversight and task orchestration
+- **Senior Python Developer** - Backend API development
+- **Senior C++ Developer** - System-level optimization
+- **DevOps Engineer** - Infrastructure and deployment
+- **Technical Writer** - Documentation generation
 
-2. **Отсутствие `.env` файла**
-   - Проект использует переменные окружения, но `.env` файл нужно создать из `.env.example`
-   - **Решение**: См. раздел "Настройка окружения"
+### 🚀 Real-time Project Execution
+Watch the execution graph in real-time as agents collaborate and complete tasks. Each step is tracked with detailed logs.
 
-3. **API ключи не настроены**
-   - Для работы LLM нужны API ключи (Groq, OpenAI, DeepSeek, Cerebras и т.д.)
-   - **Решение**: См. раздел "Настройка окружения"
+### 📊 Multi-LLM Support
+- Groq API (fast, free tier available)
+- OpenAI GPT models
+- DeepSeek (cost-effective)
+- Cerebras (high-performance)
+- Local Ollama support
 
-## 🚀 Запуск проекта на локальном сервере
+### 💾 Project Management
+- Create and manage multiple projects
+- Browse project gallery (20+ templates)
+- Track execution progress
+- Access generated code and documents
 
-### Вариант 1: Локальная разработка (без Docker)
+---
 
-#### Предварительные требования:
+## 📸 Product Screenshots
+
+### Dashboard Interface
+
+![AstraMind Dashboard](./screenshots/dashboard-main.png)
+
+*The main dashboard showing available projects and quick-start templates*
+
+### Project Creation & Configuration
+
+![Project Configuration](./screenshots/project-setup.png)
+
+*Easy project setup with customizable agents and tech stack selection*
+
+### Real-time Execution Graph
+
+![Execution Graph](./screenshots/execution-graph.png)
+
+*Watch AI agents collaborate in real-time with detailed task tracking*
+
+### Agent Marketplace
+
+![Agent Marketplace](./screenshots/agent-marketplace.png)
+
+*Browse and select from 9+ pre-built agents for your project*
+
+### Code Editor Integration
+
+![Code Editor](./screenshots/code-editor.png)
+
+*View and edit generated code with syntax highlighting*
+
+### Generated Results
+
+![Generated Results](./screenshots/results.png)
+
+*Access all generated files, documentation, and artifacts*
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
 - Python 3.11+
 - Node.js 18+
-- npm или yarn
+- Docker & Docker Compose (optional)
 
-#### Шаги:
+### Local Development
 
-1. **Клонирование и установка зависимостей:**
+1. **Clone and install dependencies:**
    ```bash
+   git clone https://github.com/sashaai2006/AstraMind.git
    cd AstraMind
    make init
    ```
-   Или вручную:
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate  # На Windows: .venv\Scripts\activate
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   cd frontend/src && npm install && cd ../..
-   ```
 
-2. **Настройка окружения:**
+2. **Set up environment:**
    ```bash
    cp .env.example .env
-   # Отредактируйте .env файл и добавьте необходимые API ключи
+   # Add your LLM API keys to .env
    ```
 
-3. **Запуск серверов:**
+3. **Run the application:**
    ```bash
    make dev
    ```
-   Или вручную:
-   ```bash
-   source .venv/bin/activate
-   python run_dev.py
-   ```
 
-4. **Доступ к приложению:**
+4. **Access the app:**
    - Frontend: http://localhost:3000
    - Backend API: http://localhost:8000
-   - API документация: http://localhost:8000/docs
+   - API Docs: http://localhost:8000/docs
 
-### Вариант 2: Запуск через Docker Compose
-
-#### Предварительные требования:
-- Docker
-- Docker Compose
-
-#### Шаги:
-
-1. **Создание `.env` файла:**
-   ```bash
-   cp .env.example .env
-   # Отредактируйте .env и добавьте API ключи
-   ```
-
-2. **Запуск контейнеров:**
-   ```bash
-   docker-compose up --build
-   ```
-
-3. **Доступ к приложению:**
-   - Frontend: http://localhost:3000
-   - Backend API: http://localhost:8000
-   - API документация: http://localhost:8000/docs
-
-4. **Остановка:**
-   ```bash
-   docker-compose down
-   ```
-
-### Вариант 3: Только Backend (для разработки API)
+### Docker Setup
 
 ```bash
-source .venv/bin/activate
-uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+docker-compose up --build
 ```
 
-### Вариант 4: Только Frontend (для разработки UI)
+---
 
-```bash
-cd frontend/src
-npm run dev
-```
-
-## ⚙️ Настройка окружения
-
-Создайте файл `.env` в корне проекта:
-
-```env
-# LLM Configuration
-LLM_MODE=groq  # Варианты: mock, ollama, groq, github, deepseek, cerebras
-
-# API Keys (выберите в зависимости от LLM_MODE)
-GROQ_API_KEY=your_groq_api_key
-OPENAI_API_KEY=your_openai_api_key
-DEEPSEEK_API_KEY=your_deepseek_api_key
-CEREBRAS_API_KEY=your_cerebras_api_key
-GITHUB_TOKEN=your_github_token
-
-# Optional: Admin API Key для защиты API
-ADMIN_API_KEY=your_admin_key
-
-# Optional: Web Search (для ResearcherAgent)
-ENABLE_WEB_SEARCH=false
-SEARCH_PROVIDER=duckduckgo
-GOOGLE_SEARCH_API_KEY=your_google_api_key
-GOOGLE_SEARCH_ENGINE_ID=your_engine_id
-```
-
-## 📁 Структура проекта
+## 📁 Project Structure
 
 ```
 AstraMind/
 ├── backend/              # FastAPI backend
-│   ├── agents/          # AI агенты (CEO, Developer, Tester, etc.)
-│   ├── api/             # API endpoints
-│   ├── core/            # Основная логика (orchestrator, graph)
-│   ├── llm/             # LLM адаптеры
-│   ├── memory/          # База данных и векторное хранилище
-│   ├── sandbox/         # Sandbox для выполнения кода
-│   └── utils/           # Утилиты
-├── frontend/            # Next.js frontend
+│   ├── agents/          # AI agents implementation
+│   ├── api/             # REST API endpoints
+│   ├── core/            # Orchestration engine
+│   ├── llm/             # LLM adapters (Groq, OpenAI, etc.)
+│   ├── memory/          # Database & vector storage
+│   └── sandbox/         # Code execution sandbox
+├── frontend/            # Next.js web application
 │   └── src/
-│       ├── components/  # React компоненты
-│       ├── contexts/    # React contexts
-│       └── pages/       # Next.js страницы
-├── docker-compose.yml   # Docker Compose конфигурация
-├── Dockerfile.backend   # Docker образ для backend
-├── Dockerfile.frontend  # Docker образ для frontend
-├── Makefile            # Команды для разработки
-├── run_dev.py          # Скрипт для запуска dev серверов
-└── requirements.txt    # Python зависимости
+│       ├── components/  # React components
+│       ├── contexts/    # React state management
+│       └── pages/       # Application pages
+└── docker-compose.yml   # Container orchestration
 ```
 
-## 🧪 Тестирование
+---
+
+## ⚙️ Configuration
+
+Create `.env` file with the following:
+
+```env
+# LLM Selection (choose one)
+LLM_MODE=groq
+
+# API Keys (based on LLM_MODE)
+GROQ_API_KEY=your_api_key_here
+OPENAI_API_KEY=your_openai_key
+DEEPSEEK_API_KEY=your_deepseek_key
+CEREBRAS_API_KEY=your_cerebras_key
+
+# Optional Settings
+ENABLE_WEB_SEARCH=false
+ADMIN_API_KEY=your_admin_key
+```
+
+---
+
+## 🎓 How It Works
+
+1. **Describe Your Idea** - Write a project description with tech requirements
+2. **Select Agents** - Choose which AI agents to work on your project
+3. **Launch Project** - System starts autonomous development
+4. **Monitor Progress** - Watch real-time execution graph and logs
+5. **Get Results** - Download generated code, docs, and artifacts
+
+---
+
+## 🧪 Testing
 
 ```bash
-source .venv/bin/activate
+make test
+# or
 pytest
 ```
 
-## 📝 Примечания
+---
 
-- База данных SQLite создаётся автоматически при первом запуске
-- Проекты сохраняются в директории `./projects`
-- Документы сохраняются в директории `./documents`
-- В режиме разработки используется hot-reload для обоих серверов
+## 🔧 Troubleshooting
 
-## 🔧 Устранение неполадок
+| Issue | Solution |
+|-------|----------|
+| **Port already in use** | Change ports in `run_dev.py` or kill process on port 3000/8000 |
+| **Database locked** | Restart Docker containers or close other database connections |
+| **ModuleNotFoundError** | Run `pip install -r requirements.txt` in activated venv |
+| **Frontend can't reach API** | Check `NEXT_PUBLIC_API_BASE_URL` env variable |
+| **Missing API keys** | Set LLM API keys in `.env` file |
 
-### Проблема: "ModuleNotFoundError"
-**Решение**: Убедитесь, что виртуальное окружение активировано и зависимости установлены:
-```bash
-source .venv/bin/activate
-pip install -r requirements.txt
-```
+---
 
-### Проблема: "Port already in use"
-**Решение**: Измените порты в `run_dev.py` или остановите процессы, использующие порты 3000 и 8000
+## 📊 Technology Stack
 
-### Проблема: "Database locked"
-**Решение**: Убедитесь, что нет других процессов, использующих базу данных. В Docker убедитесь, что volume правильно смонтирован.
+### Backend
+- **Framework**: FastAPI (async, high-performance)
+- **ORM**: SQLModel (SQLAlchemy + Pydantic)
+- **LLM Integration**: LangChain, LiteLLM
+- **Code Execution**: Custom sandbox with timeout protection
+- **Database**: SQLite (local), PostgreSQL (production-ready)
 
-### Проблема: Frontend не подключается к Backend
-**Решение**: Проверьте переменную окружения `NEXT_PUBLIC_API_BASE_URL` и убедитесь, что backend запущен на порту 8000.
-# AstraMind
-# AstraMind
+### Frontend
+- **Framework**: Next.js 14+ (React, TypeScript)
+- **Styling**: Tailwind CSS
+- **Real-time Updates**: Server-Sent Events (SSE)
+- **State Management**: React Context API
+
+### Infrastructure
+- **Containerization**: Docker & Docker Compose
+- **Deployment**: Cloud-ready configuration
+- **Scaling**: Horizontal scaling support
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please follow the existing code style and submit pull requests with detailed descriptions.
+
+---
+
+## 📄 License
+
+[Choose your license here]
+
+---
+
+## 🌐 Links
+
+- **GitHub**: [sashaai2006/AstraMind](https://github.com/sashaai2006/AstraMind)
+- **Issues**: [Report bugs and request features](https://github.com/sashaai2006/AstraMind/issues)
+- **Discussions**: [Join the community](https://github.com/sashaai2006/AstraMind/discussions)
+
+---
+
+**Built with ❤️ for autonomous AI-powered development**
